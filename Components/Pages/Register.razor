@@ -1,0 +1,27 @@
+@page "/register"
+@attribute [AllowAnonymous]
+
+<PageTitle>Create account · Luma</PageTitle>
+
+<div class="auth-page">
+    <section class="auth-card">
+        <a class="auth-brand" href="/"><span class="brand-mark">L</span><span>Luma</span></a>
+        <div class="auth-heading">
+            <span class="eyebrow">GET STARTED</span>
+            <h1>Create your Luma account</h1>
+            <p>Bring your personal and shared plans into one calm space.</p>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(Error)) { <div class="auth-error">@Error</div> }
+        <form class="auth-form" method="post" action="/account/register">
+            <AntiforgeryToken />
+            <label class="field"><span>Your name</span><input name="name" autocomplete="name" minlength="2" maxlength="80" required placeholder="Alex Morgan" /></label>
+            <label class="field"><span>Email address</span><input name="email" type="email" autocomplete="email" required placeholder="you@example.com" /></label>
+            <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters" /></label>
+            <button class="primary-button auth-submit" type="submit">Create account</button>
+        </form>
+        <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+    </section>
+    <aside class="auth-aside"><div><span>YOUR TIME, YOUR RULES</span><h2>Private when it matters. Shared when it helps.</h2><p>Invite collaborators by email and make selected events discoverable to the community.</p></div></aside>
+</div>
+
+@code { [SupplyParameterFromQuery] public string? Error { get; set; } }

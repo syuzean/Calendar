@@ -1,4 +1,10 @@
 using Calendar.Components;
+using Calendar.Data;
+using Calendar.Models;
+using Calendar.Services;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 namespace Calendar
 {
@@ -11,6 +17,23 @@ namespace Calendar
             // Add services to the container.
             builder.Services.AddRazorComponents()
                 .AddInteractiveServerComponents();
+            builder.Services.AddCascadingAuthenticationState();
+            builder.Services.AddDbContextFactory<CalendarDbContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+            builder.Services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<CalendarDbContext>>().CreateDbContext());
+            builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
+            builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+                .AddCookie(options =>
+                {
+                    options.LoginPath = "/login";
+                    options.Cookie.Name = "Luma.Auth";
+                    options.Cookie.HttpOnly = true;
+                    options.Cookie.SameSite = SameSiteMode.Lax;
+                    options.ExpireTimeSpan = TimeSpan.FromDays(30);
+                    options.SlidingExpiration = true;
+                });
+            builder.Services.AddAuthorization();
+            builder.Services.AddScoped<CalendarStore>();
 
             var app = builder.Build();
 
@@ -25,10 +48,19 @@ namespace Calendar
             app.UseHttpsRedirection();
 
             app.UseStaticFiles();
+            app.UseAuthentication();
+            app.UseAuthorization();
             app.UseAntiforgery();
+
+            using (var scope = app.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<CalendarDbContext>();
+                db.Database.Migrate();
+            }
 
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode();
+            app.MapAccountEndpoints();
 
             app.Run();
         }

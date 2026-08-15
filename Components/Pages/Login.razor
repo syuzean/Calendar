@@ -1,0 +1,31 @@
+@page "/login"
+@attribute [AllowAnonymous]
+
+<PageTitle>Sign in · Luma</PageTitle>
+
+<div class="auth-page">
+    <section class="auth-card">
+        <a class="auth-brand" href="/"><span class="brand-mark">L</span><span>Luma</span></a>
+        <div class="auth-heading">
+            <span class="eyebrow">WELCOME BACK</span>
+            <h1>Sign in to your calendar</h1>
+            <p>Your events and shared calendars are waiting for you.</p>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(Error)) { <div class="auth-error">@Error</div> }
+        <form class="auth-form" method="post" action="/account/login">
+            <AntiforgeryToken />
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <label class="field"><span>Email address</span><input name="email" type="email" autocomplete="email" required placeholder="you@example.com" /></label>
+            <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" minlength="8" required placeholder="Your password" /></label>
+            <label class="remember-check"><input name="rememberMe" type="checkbox" /><span></span> Keep me signed in</label>
+            <button class="primary-button auth-submit" type="submit">Sign in</button>
+        </form>
+        <p class="auth-switch">New to Luma? <a href="/register">Create an account</a></p>
+    </section>
+    <aside class="auth-aside"><div><span>PLAN TOGETHER</span><h2>One calendar for your plans and your people.</h2><p>Keep private moments private, share events with selected people, or publish them for everyone.</p></div></aside>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+}

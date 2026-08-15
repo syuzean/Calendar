@@ -1,0 +1,50 @@
+@using global::Calendar.Models
+
+<div class="month-view">
+    <div class="weekday-row">
+        @foreach (var day in Weekdays) { <div>@day</div> }
+    </div>
+    <div class="month-grid">
+        @foreach (var date in Days)
+        {
+            var dayEvents = Events.Where(item => item.Start.Date <= date &&
+                (item.IsAllDay ? item.End.Date > date : item.End.Date >= date))
+                .OrderByDescending(item => item.IsAllDay).ThenBy(item => item.Start).ToList();
+            <div class="month-day @(date.Month != DisplayDate.Month ? "outside" : "") @(date == DateTime.Today ? "today" : "")"
+                 @onclick="() => EmptySelected.InvokeAsync(date.AddHours(9))">
+                <div class="day-number"><span>@date.Day</span></div>
+                <div class="day-events">
+                    @foreach (var item in dayEvents.Take(3))
+                    {
+                        <button class="month-event color-@item.Color" title="@item.Title" @onclick:stopPropagation="true" @onclick="() => EventSelected.InvokeAsync(item)">
+                            @if (!item.IsAllDay) { <span class="event-time">@item.Start.ToString("h:mm")</span> }
+                            <span>@item.Title</span>
+                        </button>
+                    }
+                    @if (dayEvents.Count > 3)
+                    {
+                        <button class="more-events" @onclick:stopPropagation="true" @onclick="() => DaySelected.InvokeAsync(date)">+@(dayEvents.Count - 3) more</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DateTime DisplayDate { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<CalendarEvent> Events { get; set; } = [];
+    [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
+    [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
+    [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
+    private static readonly string[] Weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+    private IEnumerable<DateTime> Days
+    {
+        get
+        {
+            var first = new DateTime(DisplayDate.Year, DisplayDate.Month, 1);
+            var start = first.AddDays(-(((int)first.DayOfWeek + 6) % 7));
+            return Enumerable.Range(0, 42).Select(day => start.AddDays(day));
+        }
+    }
+}

@@ -1,7 +1,131 @@
-﻿@page "/"
+@page "/"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@implements IDisposable
+@using global::Calendar.Models
+@using global::Calendar.Services
+@inject CalendarStore Store
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Luma Calendar</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="calendar-app">
+    <aside class="sidebar-panel">
+        <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
+        <button class="create-button" @onclick="CreateFromButton"><span>+</span> Create event</button>
+        <section class="mini-calendar">
+            <header><strong>@MiniDate.ToString("MMMM yyyy")</strong><div><button aria-label="Previous month" @onclick="() => MiniDate = MiniDate.AddMonths(-1)">‹</button><button aria-label="Next month" @onclick="() => MiniDate = MiniDate.AddMonths(1)">›</button></div></header>
+            <div class="mini-weekdays">@foreach (var label in MiniWeekdays) { <span>@label</span> }</div>
+            <div class="mini-grid">
+                @foreach (var day in MiniDays)
+                { <button class="@(day.Month != MiniDate.Month ? "muted" : "") @(day == DateTime.Today ? "today" : "") @(day == DisplayDate.Date ? "selected" : "")" @onclick="() => SelectMiniDay(day)">@day.Day</button> }
+            </div>
+        </section>
+        <section class="calendar-list">
+            <h3>Calendars</h3>
+            <button class="@(Scope == "All" ? "active" : "")" @onclick='() => Scope = "All"'><i class="scope-icon all"></i> All events <span>@Store.Events.Count</span></button>
+            <button class="@(Scope == "Mine" ? "active" : "")" @onclick='() => Scope = "Mine"'><i class="scope-icon mine"></i> Organized by me <span>@Store.Events.Count(e => e.OwnerId == Store.CurrentUserId)</span></button>
+            <button class="@(Scope == "Shared" ? "active" : "")" @onclick='() => Scope = "Shared"'><i class="scope-icon shared"></i> Shared with me <span>@Store.Events.Count(e => e.IsCollaborator)</span></button>
+            <button class="@(Scope == "Public" ? "active" : "")" @onclick='() => Scope = "Public"'><i class="scope-icon public"></i> Public events <span>@Store.Events.Count(e => e.IsPublic && e.OwnerId != Store.CurrentUserId)</span></button>
+        </section>
+        <div class="sidebar-footer"><span class="avatar">@Initials</span><div><strong>@Store.CurrentUserName</strong><small>Synced with MSSQL</small></div><form method="post" action="/account/logout"><AntiforgeryToken /><button title="Sign out" aria-label="Sign out">↗</button></form></div>
+    </aside>
 
-Welcome to your new app.
+    <main class="calendar-main">
+        <header class="main-header">
+            <div class="header-primary">
+                <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
+                <button class="today-button" @onclick="GoToday">Today</button>
+                <div class="nav-buttons"><button aria-label="Previous" @onclick="Previous">‹</button><button aria-label="Next" @onclick="Next">›</button></div>
+                <h1>@PeriodLabel</h1>
+            </div>
+            <div class="header-actions">
+                <div class="view-switcher" role="group" aria-label="Calendar view">
+                    @foreach (var view in Views) { <button class="@(CurrentView == view ? "active" : "")" @onclick="() => SetView(view)">@view</button> }
+                </div>
+                <button class="mobile-create" aria-label="Create event" @onclick="CreateFromButton">+</button>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(Store.LastNotice))
+        { <div class="store-notice">@Store.LastNotice</div> }
+
+        <section class="calendar-surface" aria-live="polite">
+            @if (!Store.IsReady)
+            { <div class="loading-calendar"><div></div><div></div><div></div><div></div><span>Loading your calendar…</span></div> }
+            else if (CurrentView == "Month")
+            { <MonthView DisplayDate="DisplayDate" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" /> }
+            else
+            { <TimeGridView Days="VisibleDays" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" /> }
+        </section>
+    </main>
+</div>
+
+@if (EditingEvent is not null)
+{ <EventDialog @key="DialogKey" Event="EditingEvent" IsNew="IsCreating" CloseRequested="CloseDialog" SaveRequested="SaveEvent" DeleteRequested="DeleteEvent" /> }
+
+@code {
+    private static readonly string[] Views = ["Month", "Week", "Day"];
+    private static readonly string[] MiniWeekdays = ["M", "T", "W", "T", "F", "S", "S"];
+    private DateTime DisplayDate = DateTime.Today;
+    private DateTime MiniDate = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private string CurrentView = "Month";
+    private string Scope = "All";
+    private CalendarEvent? EditingEvent;
+    private bool IsCreating;
+    private int DialogKey;
+
+    private IReadOnlyList<CalendarEvent> VisibleEvents => Scope switch
+    {
+        "Mine" => Store.Events.Where(item => item.OwnerId == Store.CurrentUserId).ToList(),
+        "Shared" => Store.Events.Where(item => item.IsCollaborator).ToList(),
+        "Public" => Store.Events.Where(item => item.OwnerId != Store.CurrentUserId && item.IsPublic).ToList(),
+        _ => Store.Events
+    };
+    private string Initials => string.Concat(Store.CurrentUserName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])));
+
+    protected override void OnInitialized() => Store.Changed += OnStoreChanged;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await Store.InitializeAsync();
+        StateHasChanged();
+    }
+
+    private IReadOnlyList<DateTime> VisibleDays
+    {
+        get
+        {
+            if (CurrentView == "Day") return [DisplayDate.Date];
+            var start = DisplayDate.Date.AddDays(-(((int)DisplayDate.DayOfWeek + 6) % 7));
+            return Enumerable.Range(0, 7).Select(day => start.AddDays(day)).ToList();
+        }
+    }
+    private string PeriodLabel => CurrentView switch { "Day" => DisplayDate.ToString("dddd, MMMM d"), "Week" => WeekLabel(), _ => DisplayDate.ToString("MMMM yyyy") };
+    private IEnumerable<DateTime> MiniDays
+    {
+        get
+        {
+            var start = MiniDate.AddDays(-(((int)MiniDate.DayOfWeek + 6) % 7));
+            return Enumerable.Range(0, 42).Select(day => start.AddDays(day));
+        }
+    }
+    private string WeekLabel()
+    {
+        var days = VisibleDays;
+        return days[0].Month == days[^1].Month ? $"{days[0]:MMMM d}–{days[^1]:d, yyyy}" : $"{days[0]:MMM d} – {days[^1]:MMM d, yyyy}";
+    }
+    private void Previous() => DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(-1), "Week" => DisplayDate.AddDays(-7), _ => DisplayDate.AddDays(-1) };
+    private void Next() => DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(1), "Week" => DisplayDate.AddDays(7), _ => DisplayDate.AddDays(1) };
+    private void GoToday() { DisplayDate = DateTime.Today; MiniDate = new(DateTime.Today.Year, DateTime.Today.Month, 1); }
+    private void SetView(string view) => CurrentView = view;
+    private void SelectMiniDay(DateTime day) { DisplayDate = day; MiniDate = new(day.Year, day.Month, 1); }
+    private void OpenDay(DateTime day) { DisplayDate = day; CurrentView = "Day"; }
+    private void CreateFromButton() => CreateEvent(DisplayDate.Date.AddHours(9));
+    private void CreateEvent(DateTime start) { EditingEvent = new CalendarEvent { Start = start, End = start.AddHours(1), Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
+    private void OpenEvent(CalendarEvent item) { EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
+    private void CloseDialog() => EditingEvent = null;
+    private async Task SaveEvent(CalendarEvent item) { await Store.SaveAsync(item); EditingEvent = null; DisplayDate = item.Start.Date; }
+    private async Task DeleteEvent(Guid id) { await Store.DeleteAsync(id); EditingEvent = null; }
+    private void OnStoreChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => Store.Changed -= OnStoreChanged;
+}

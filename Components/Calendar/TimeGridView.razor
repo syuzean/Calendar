@@ -1,0 +1,67 @@
+@using global::Calendar.Models
+
+<div class="time-view">
+    <div class="time-header" style="--day-count:@Days.Count">
+        <div class="time-gutter"></div>
+        @foreach (var day in Days)
+        {
+            <button class="time-day-header @(day == DateTime.Today ? "today" : "")" @onclick="() => DaySelected.InvokeAsync(day)">
+                <span>@day.ToString("ddd").ToUpperInvariant()</span><strong>@day.Day</strong>
+            </button>
+        }
+    </div>
+    @if (AllDayEvents.Any())
+    {
+        <div class="all-day-row" style="--day-count:@Days.Count">
+            <div class="all-day-label">all-day</div>
+            @foreach (var day in Days)
+            {
+                <div class="all-day-cell">
+                    @foreach (var item in AllDayEvents.Where(e => e.Start.Date <= day && e.End.Date > day))
+                    { <button class="all-day-event color-@item.Color" @onclick="() => EventSelected.InvokeAsync(item)">@item.Title</button> }
+                </div>
+            }
+        </div>
+    }
+    <div class="time-scroll">
+        <div class="time-grid" style="--day-count:@Days.Count">
+            <div class="hour-labels">
+                @foreach (var hour in Hours) { <span style="top:@(hour * 64)px">@(hour == 0 ? "" : DateTime.Today.AddHours(hour).ToString("h tt"))</span> }
+            </div>
+            @foreach (var day in Days)
+            {
+                <div class="day-column @(day == DateTime.Today ? "today-column" : "")">
+                    @foreach (var hour in Hours)
+                    {
+                        var slot = day.AddHours(hour);
+                        <button class="hour-slot" aria-label="Create event at @slot.ToString("f")" @onclick="() => EmptySelected.InvokeAsync(slot)"></button>
+                    }
+                    @foreach (var item in Events.Where(e => !e.IsAllDay && e.Start.Date == day).OrderBy(e => e.Start))
+                    {
+                        <button class="time-event color-@item.Color" style="@EventStyle(item)" @onclick="() => EventSelected.InvokeAsync(item)">
+                            <strong>@item.Title</strong><span>@item.Start.ToString("h:mm tt") – @item.End.ToString("h:mm tt")</span>
+                        </button>
+                    }
+                    @if (day == DateTime.Today) { <div class="now-line" style="top:@NowTop()px"><span></span></div> }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<DateTime> Days { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<CalendarEvent> Events { get; set; } = [];
+    [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
+    [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
+    [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
+    private static readonly int[] Hours = Enumerable.Range(0, 24).ToArray();
+    private IEnumerable<CalendarEvent> AllDayEvents => Events.Where(e => e.IsAllDay);
+    private static double NowTop() => (DateTime.Now.Hour + DateTime.Now.Minute / 60d) * 64;
+    private static string EventStyle(CalendarEvent item)
+    {
+        var start = item.Start.TimeOfDay.TotalMinutes;
+        var duration = Math.Min(1440 - start, Math.Max(30, (item.End - item.Start).TotalMinutes));
+        return $"top:{start / 60 * 64 + 2:0.#}px;height:{Math.Max(28, duration / 60 * 64 - 4):0.#}px";
+    }
+}

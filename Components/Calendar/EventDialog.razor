@@ -1,0 +1,131 @@
+@using global::Calendar.Models
+
+<div class="dialog-backdrop" role="presentation" @onclick="Close">
+    <section class="event-dialog" role="dialog" aria-modal="true" aria-labelledby="event-dialog-title" @onclick:stopPropagation="true">
+        <header class="dialog-header">
+            <div>
+                <span class="eyebrow">@(IsNew ? "NEW EVENT" : "EVENT DETAILS")</span>
+                <h2 id="event-dialog-title">@(IsNew ? "Add to your calendar" : Event.CanEdit ? "Edit event" : Event.Title)</h2>
+                @if (!IsNew) { <p class="event-owner">Organized by @Event.OwnerName</p> }
+            </div>
+            <button class="icon-button" aria-label="Close" type="button" @onclick="Close">×</button>
+        </header>
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            <fieldset class="form-fields" disabled="@(!Event.CanEdit)">
+            <label class="field title-field">
+                <span>Event title</span>
+                <input autofocus placeholder="What are you planning?" @bind="Title" />
+                @if (!string.IsNullOrEmpty(Error)) { <small class="field-error">@Error</small> }
+            </label>
+            <div class="field-grid">
+                <label class="field">
+                    <span>Date</span><input type="date" value="@DateText" @onchange="UpdateDate" />
+                </label>
+                <label class="all-day-toggle"><input type="checkbox" @bind="IsAllDay" /><span></span> All day</label>
+            </div>
+            @if (!IsAllDay)
+            {
+                <div class="field-grid time-fields">
+                    <label class="field"><span>Starts</span><input type="time" value="@StartTimeText" @onchange="UpdateStartTime" /></label>
+                    <label class="field"><span>Ends</span><input type="time" value="@EndTimeText" @onchange="UpdateEndTime" /></label>
+                </div>
+            }
+            <label class="field">
+                <span>Notes <em>optional</em></span>
+                <textarea rows="3" placeholder="Add context, links, or a location…" @bind="Description"></textarea>
+            </label>
+            <div class="sharing-panel">
+                <label class="public-toggle"><input type="checkbox" @bind="IsPublic" /><span><strong>Public event</strong><small>Anyone with a Luma account can discover and view it.</small></span></label>
+                <label class="field collaborators-field">
+                    <span>Invite collaborators <em>optional</em></span>
+                    <textarea rows="2" placeholder="alex@example.com, sam@example.com" @bind="CollaboratorText"></textarea>
+                    <small>Enter the email addresses of registered Luma users, separated by commas.</small>
+                </label>
+            </div>
+            <fieldset class="color-picker">
+                <legend>Color</legend>
+                @foreach (var color in Colors)
+                {
+                    <label class="color-choice color-@color" title="@color">
+                        <input type="radio" name="event-color" value="@color" @onchange="() => Color = color" checked="@(Color == color)" />
+                        <span></span>
+                    </label>
+                }
+            </fieldset>
+            </fieldset>
+            <footer class="dialog-actions">
+                @if (!IsNew && Event.CanEdit)
+                {
+                    @if (ConfirmDelete)
+                    {
+                        <span class="delete-confirm">Delete this event?</span>
+                        <button class="text-button danger" type="button" @onclick="Delete">Yes, delete</button>
+                    }
+                    else
+                    {
+                        <button class="text-button danger" type="button" @onclick="() => ConfirmDelete = true">Delete</button>
+                    }
+                }
+                <span class="action-spacer"></span>
+                <button class="secondary-button" type="button" @onclick="Close">@(Event.CanEdit ? "Cancel" : "Close")</button>
+                @if (Event.CanEdit) { <button class="primary-button" type="submit">@(IsNew ? "Create event" : "Save changes")</button> }
+            </footer>
+        </form>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CalendarEvent Event { get; set; } = new();
+    [Parameter] public bool IsNew { get; set; }
+    [Parameter] public EventCallback CloseRequested { get; set; }
+    [Parameter] public EventCallback<CalendarEvent> SaveRequested { get; set; }
+    [Parameter] public EventCallback<Guid> DeleteRequested { get; set; }
+
+    private static readonly string[] Colors = ["violet", "blue", "green", "orange", "rose"];
+    private string Title = string.Empty, DateText = string.Empty, StartTimeText = string.Empty, EndTimeText = string.Empty;
+    private string Description = string.Empty, Color = "violet", Error = string.Empty, CollaboratorText = string.Empty;
+    private bool IsAllDay, IsPublic, ConfirmDelete;
+
+    protected override void OnInitialized()
+    {
+        Title = Event.Title;
+        DateText = Event.Start.ToString("yyyy-MM-dd");
+        StartTimeText = Event.Start.ToString("HH:mm");
+        EndTimeText = Event.End.ToString("HH:mm");
+        Description = Event.Description;
+        Color = Event.Color;
+        IsAllDay = Event.IsAllDay;
+        IsPublic = Event.IsPublic;
+        CollaboratorText = string.Join(", ", Event.CollaboratorEmails);
+    }
+
+    private async Task Submit()
+    {
+        if (!Event.CanEdit) return;
+        if (string.IsNullOrWhiteSpace(Title)) { Error = "Give your event a title."; return; }
+        if (!DateTime.TryParse(DateText, out var date)) { Error = "Choose a valid date."; return; }
+        var start = date.Date;
+        var end = date.Date.AddDays(1);
+        if (!IsAllDay)
+        {
+            if (!TimeSpan.TryParse(StartTimeText, out var startTime) || !TimeSpan.TryParse(EndTimeText, out var endTime))
+            { Error = "Choose valid start and end times."; return; }
+            start = date.Date.Add(startTime);
+            end = date.Date.Add(endTime);
+            if (end <= start) end = end.AddDays(1);
+        }
+        await SaveRequested.InvokeAsync(new CalendarEvent
+        {
+            Id = Event.Id, Title = Title.Trim(), Start = start, End = end, IsAllDay = IsAllDay,
+            Description = Description.Trim(), Color = Color, IsPublic = IsPublic, OwnerId = Event.OwnerId,
+            OwnerName = Event.OwnerName, CanEdit = true,
+            CollaboratorEmails = CollaboratorText.Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+        });
+    }
+
+    private Task Close() => CloseRequested.InvokeAsync();
+    private Task Delete() => DeleteRequested.InvokeAsync(Event.Id);
+    private void UpdateDate(ChangeEventArgs args) => DateText = args.Value?.ToString() ?? string.Empty;
+    private void UpdateStartTime(ChangeEventArgs args) => StartTimeText = args.Value?.ToString() ?? string.Empty;
+    private void UpdateEndTime(ChangeEventArgs args) => EndTimeText = args.Value?.ToString() ?? string.Empty;
+}
