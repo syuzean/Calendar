@@ -5,6 +5,7 @@
 @using global::Calendar.Models
 @using global::Calendar.Services
 @inject CalendarStore Store
+@inject IJSRuntime JS
 
 <PageTitle>Luma Calendar</PageTitle>
 
@@ -48,31 +49,85 @@
 
         @if (!string.IsNullOrWhiteSpace(Store.LastNotice))
         { <div class="store-notice">@Store.LastNotice</div> }
+        @if (EditingEvent is null && !string.IsNullOrWhiteSpace(OperationError))
+        { <div class="operation-error" role="alert">@OperationError</div> }
 
         <section class="calendar-surface" aria-live="polite">
             @if (!Store.IsReady)
             { <div class="loading-calendar"><div></div><div></div><div></div><div></div><span>Loading your calendar…</span></div> }
             else if (CurrentView == "Month")
-            { <MonthView DisplayDate="DisplayDate" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" /> }
+            { <MonthView DisplayDate="DisplayDate" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
             else
-            { <TimeGridView Days="VisibleDays" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" /> }
+            { <TimeGridView Days="VisibleDays" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
         </section>
     </main>
 </div>
 
+@if (ContextEvent is not null)
+{
+    <div class="event-context-layer" tabindex="-1" @ref="ContextMenuLayer"
+         @onclick="CloseContextMenu" @onkeydown="HandleContextMenuKeyDown">
+        <div class="event-context-menu @(ShowContextShare ? "event-context-share" : "")"
+             role="@(ShowContextShare ? "dialog" : "menu")" aria-label="@(ShowContextShare ? "Share event" : "Event actions")"
+             style="@ContextMenuStyle" @onclick:stopPropagation="true">
+            @if (ShowContextShare)
+            {
+                <form @onsubmit="ShareFromContextMenu" @onsubmit:preventDefault="true">
+                    <label for="context-share-email">Share <strong>@ContextEvent.Title</strong></label>
+                    <input id="context-share-email" @ref="ContextShareInput" type="email" required
+                           placeholder="collaborator@example.com" autocomplete="email"
+                           @bind="ContextShareEmail" @bind:event="oninput" />
+                    @if (!string.IsNullOrWhiteSpace(ContextShareFeedback))
+                    {
+                        <p class="context-share-feedback @ContextShareFeedbackKind" role="status">@ContextShareFeedback</p>
+                    }
+                    <div class="event-context-confirm">
+                        <button type="button" @onclick="CancelContextShare">@(ContextShareSucceeded ? "Close" : "Cancel")</button>
+                        @if (!ContextShareSucceeded)
+                        {
+                            <button class="share" type="submit">Share</button>
+                        }
+                    </div>
+                </form>
+            }
+            else if (ConfirmContextDelete)
+            {
+                <p>Delete <strong>@ContextEvent.Title</strong>?</p>
+                <div class="event-context-confirm">
+                    <button type="button" @onclick="CancelContextDeleteConfirmation">Cancel</button>
+                    <button class="danger" type="button" @onclick="DeleteFromContextMenu">Delete</button>
+                </div>
+            }
+            else
+            {
+                <button type="button" role="menuitem" @onclick="EditFromContextMenu">Edit</button>
+                <button type="button" role="menuitem" @onclick="ShowContextShareForm">Share</button>
+                <button class="danger" type="button" role="menuitem" @onclick="ShowContextDeleteConfirmation">Delete</button>
+            }
+        </div>
+    </div>
+}
+
 @if (EditingEvent is not null)
-{ <EventDialog @key="DialogKey" Event="EditingEvent" IsNew="IsCreating" CloseRequested="CloseDialog" SaveRequested="SaveEvent" DeleteRequested="DeleteEvent" /> }
+{ <EventDialog @key="DialogKey" Event="EditingEvent" IsNew="IsCreating" ErrorMessage="@OperationError" CloseRequested="CloseDialog" SaveRequested="SaveEvent" DeleteRequested="DeleteEvent" /> }
 
 @code {
     private static readonly string[] Views = ["Month", "Week", "Day"];
     private static readonly string[] MiniWeekdays = ["M", "T", "W", "T", "F", "S", "S"];
     private DateTime DisplayDate = DateTime.Today;
     private DateTime MiniDate = new(DateTime.Today.Year, DateTime.Today.Month, 1);
-    private string CurrentView = "Month";
+    private string CurrentView = "Day";
     private string Scope = "All";
     private CalendarEvent? EditingEvent;
     private bool IsCreating;
     private int DialogKey;
+    private string? OperationError;
+    private DotNetObjectReference<Home>? DragDropReference;
+    private CalendarEvent? ContextEvent;
+    private ElementReference ContextMenuLayer, ContextShareInput;
+    private double ContextMenuX, ContextMenuY;
+    private bool ConfirmContextDelete, ContextMenuNeedsFocus, ShowContextShare, ContextShareNeedsFocus, ContextShareSucceeded;
+    private string ContextShareEmail = string.Empty, ContextShareFeedback = string.Empty, ContextShareFeedbackKind = string.Empty;
 
     private IReadOnlyList<CalendarEvent> VisibleEvents => Scope switch
     {
@@ -86,9 +141,23 @@
     protected override void OnInitialized() => Store.Changed += OnStoreChanged;
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        await Store.InitializeAsync();
-        StateHasChanged();
+        if (firstRender)
+        {
+            await Store.InitializeAsync();
+            DragDropReference = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("lumaCalendarDrag.initialize", DragDropReference);
+            StateHasChanged();
+        }
+        if (ContextShareNeedsFocus)
+        {
+            ContextShareNeedsFocus = false;
+            await ContextShareInput.FocusAsync(preventScroll: true);
+        }
+        else if (ContextMenuNeedsFocus)
+        {
+            ContextMenuNeedsFocus = false;
+            await ContextMenuLayer.FocusAsync(preventScroll: true);
+        }
     }
 
     private IReadOnlyList<DateTime> VisibleDays
@@ -121,11 +190,219 @@
     private void SelectMiniDay(DateTime day) { DisplayDate = day; MiniDate = new(day.Year, day.Month, 1); }
     private void OpenDay(DateTime day) { DisplayDate = day; CurrentView = "Day"; }
     private void CreateFromButton() => CreateEvent(DisplayDate.Date.AddHours(9));
-    private void CreateEvent(DateTime start) { EditingEvent = new CalendarEvent { Start = start, End = start.AddHours(1), Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
-    private void OpenEvent(CalendarEvent item) { EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
-    private void CloseDialog() => EditingEvent = null;
-    private async Task SaveEvent(CalendarEvent item) { await Store.SaveAsync(item); EditingEvent = null; DisplayDate = item.Start.Date; }
-    private async Task DeleteEvent(Guid id) { await Store.DeleteAsync(id); EditingEvent = null; }
+    private void CreateEvent(DateTime start) { OperationError = null; EditingEvent = new CalendarEvent { Start = start, End = start.AddHours(1), Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
+    private void OpenEvent(CalendarEvent item) { OperationError = null; EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
+    private void CloseDialog() { OperationError = null; EditingEvent = null; }
+    private async Task SaveEvent(CalendarEvent item)
+    {
+        try
+        {
+            if (IsCreating) await Store.CreateAsync(item);
+            else await Store.UpdateAsync(item);
+            EditingEvent = null;
+            DisplayDate = item.Start.Date;
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or EventConcurrencyException or UnauthorizedAccessException)
+        {
+            OperationError = exception.Message;
+            if (exception is EventConcurrencyException) await Store.ReloadAsync();
+        }
+    }
+    private async Task DeleteEvent(CalendarEvent item)
+    {
+        try
+        {
+            await Store.DeleteAsync(item.Id, item.Version);
+            EditingEvent = null;
+        }
+        catch (Exception exception) when (exception is EventConcurrencyException or UnauthorizedAccessException)
+        {
+            OperationError = exception.Message;
+            if (exception is EventConcurrencyException) await Store.ReloadAsync();
+        }
+    }
+    private void OpenContextMenu(EventContextRequest request)
+    {
+        if (!request.Event.CanEdit) return;
+        OperationError = null;
+        ContextEvent = request.Event.Copy();
+        ContextMenuX = request.ClientX;
+        ContextMenuY = request.ClientY;
+        ConfirmContextDelete = false;
+        ShowContextShare = false;
+        ResetContextShare();
+        ContextMenuNeedsFocus = true;
+    }
+    private void CloseContextMenu()
+    {
+        ContextEvent = null;
+        ConfirmContextDelete = false;
+        ShowContextShare = false;
+        ResetContextShare();
+        ContextMenuNeedsFocus = false;
+    }
+    private void HandleContextMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") CloseContextMenu();
+    }
+    private void ShowContextDeleteConfirmation()
+    {
+        ShowContextShare = false;
+        ConfirmContextDelete = true;
+        ContextMenuNeedsFocus = true;
+    }
+    private void CancelContextDeleteConfirmation()
+    {
+        ConfirmContextDelete = false;
+        ContextMenuNeedsFocus = true;
+    }
+    private void ShowContextShareForm()
+    {
+        ConfirmContextDelete = false;
+        ShowContextShare = true;
+        ResetContextShare();
+        ContextShareNeedsFocus = true;
+    }
+    private void CancelContextShare()
+    {
+        ShowContextShare = false;
+        ResetContextShare();
+        ContextMenuNeedsFocus = true;
+    }
+    private async Task ShareFromContextMenu()
+    {
+        if (ContextEvent is not { } item) return;
+        var email = ContextShareEmail.Trim();
+        if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
+        {
+            SetContextShareFeedback("Enter a valid email address.", "error");
+            return;
+        }
+        if (item.CollaboratorEmails.Contains(email, StringComparer.OrdinalIgnoreCase))
+        {
+            ContextShareSucceeded = true;
+            SetContextShareFeedback("This user is already a collaborator.", "success");
+            return;
+        }
+
+        try
+        {
+            var updated = item.Copy();
+            updated.CollaboratorEmails.Add(email);
+            await Store.UpdateAsync(updated);
+            ContextEvent = Store.Events.SingleOrDefault(calendarEvent => calendarEvent.Id == item.Id)?.Copy() ?? updated;
+            var wasShared = ContextEvent.CollaboratorEmails.Contains(email, StringComparer.OrdinalIgnoreCase);
+            ContextShareSucceeded = wasShared;
+            if (wasShared && string.IsNullOrWhiteSpace(Store.LastNotice))
+                SetContextShareFeedback($"Event shared with {email}.", "success");
+            else if (wasShared)
+                SetContextShareFeedback(Store.LastNotice!, "warning");
+            else
+                SetContextShareFeedback(Store.LastNotice ?? "No registered LUMA user was found for that email.", "error");
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or EventConcurrencyException or UnauthorizedAccessException)
+        {
+            SetContextShareFeedback(exception.Message, "error");
+            if (exception is EventConcurrencyException)
+            {
+                await Store.ReloadAsync();
+                ContextEvent = Store.Events.SingleOrDefault(calendarEvent => calendarEvent.Id == item.Id)?.Copy();
+            }
+        }
+        catch
+        {
+            SetContextShareFeedback("The event could not be shared. Please try again.", "error");
+        }
+    }
+    private void SetContextShareFeedback(string message, string kind)
+    {
+        ContextShareFeedback = message;
+        ContextShareFeedbackKind = kind;
+    }
+    private void ResetContextShare()
+    {
+        ContextShareEmail = string.Empty;
+        ContextShareFeedback = string.Empty;
+        ContextShareFeedbackKind = string.Empty;
+        ContextShareSucceeded = false;
+        ContextShareNeedsFocus = false;
+    }
+    private void EditFromContextMenu()
+    {
+        if (ContextEvent is not { } item) return;
+        CloseContextMenu();
+        OpenEvent(item);
+    }
+    private async Task DeleteFromContextMenu()
+    {
+        if (ContextEvent is not { } item) return;
+        CloseContextMenu();
+        await DeleteEvent(item);
+    }
+    private string ContextMenuStyle
+    {
+        get
+        {
+            var width = ShowContextShare ? 292 : 180;
+            var height = ShowContextShare ? 220 : 126;
+            return FormattableString.Invariant(
+                $"left:min(calc(100vw - {width}px), {Math.Max(8, ContextMenuX):0.##}px);top:min(calc(100vh - {height}px), {Math.Max(8, ContextMenuY):0.##}px)");
+        }
+    }
+    [JSInvokable]
+    public async Task HandleCalendarDrop(string eventId, string targetValue, string targetKind, bool copy)
+    {
+        OperationError = null;
+        if (!Guid.TryParse(eventId, out var id) ||
+            !DateTime.TryParseExact(targetValue, targetKind == "day" ? "yyyy-MM-dd" : "yyyy-MM-ddTHH:mm:ss",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var target) ||
+            Store.Events.SingleOrDefault(item => item.Id == id) is not { } source)
+        {
+            OperationError = "The dragged event or destination is no longer available. Your calendar has been refreshed.";
+            await Store.ReloadAsync();
+            return;
+        }
+
+        var targetStart = targetKind switch
+        {
+            "day" when source.IsAllDay => target.Date,
+            "day" => target.Date.Add(source.Start.TimeOfDay),
+            "time" when source.IsAllDay => target.Date,
+            "time" => target,
+            _ => default
+        };
+        if (targetStart == default)
+        {
+            OperationError = "That calendar destination is not valid.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        try
+        {
+            if (copy)
+                await Store.CopyAsync(source.Id, source.Version, targetStart);
+            else
+                await Store.MoveAsync(source.Id, source.Version, targetStart);
+            DisplayDate = targetStart.Date;
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or EventConcurrencyException or UnauthorizedAccessException)
+        {
+            OperationError = exception.Message;
+            await Store.ReloadAsync();
+        }
+        catch
+        {
+            OperationError = copy
+                ? "The event could not be copied. No calendar changes were made; please try again."
+                : "The event could not be moved. Your calendar has been refreshed; please try again.";
+            try { await Store.ReloadAsync(); } catch { }
+        }
+    }
     private void OnStoreChanged() => InvokeAsync(StateHasChanged);
-    public void Dispose() => Store.Changed -= OnStoreChanged;
+    public void Dispose()
+    {
+        Store.Changed -= OnStoreChanged;
+        DragDropReference?.Dispose();
+    }
 }

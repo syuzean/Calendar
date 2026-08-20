@@ -2,6 +2,7 @@ using Calendar.Components;
 using Calendar.Data;
 using Calendar.Models;
 using Calendar.Services;
+using Calendar.Services.Email;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,13 @@ namespace Calendar
                     options.SlidingExpiration = true;
                 });
             builder.Services.AddAuthorization();
+            builder.Services.Configure<SmtpOptions>(options =>
+            {
+                builder.Configuration.GetSection(SmtpOptions.SectionName).Bind(options);
+                options.Password = Environment.GetEnvironmentVariable(SmtpOptions.PasswordEnvironmentVariable) ?? string.Empty;
+            });
+            builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+            builder.Services.AddSingleton<IEventShareNotifier, EventShareNotifier>();
             builder.Services.AddScoped<CalendarStore>();
 
             var app = builder.Build();

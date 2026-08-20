@@ -25,6 +25,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.Property(item => item.Title).HasMaxLength(180);
             entity.Property(item => item.Description).HasMaxLength(4000);
             entity.Property(item => item.Color).HasMaxLength(20);
+            entity.Property(item => item.Version).IsConcurrencyToken();
             entity.HasIndex(item => item.Start);
             entity.HasIndex(item => new { item.OwnerId, item.Start });
             entity.HasOne(item => item.Owner)

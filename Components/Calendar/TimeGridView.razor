@@ -16,9 +16,16 @@
             <div class="all-day-label">all-day</div>
             @foreach (var day in Days)
             {
-                <div class="all-day-cell">
+                <div class="all-day-cell" data-calendar-drop="day" data-drop-value="@day.ToString("yyyy-MM-dd")">
                     @foreach (var item in AllDayEvents.Where(e => e.Start.Date <= day && e.End.Date > day))
-                    { <button class="all-day-event color-@item.Color" @onclick="() => EventSelected.InvokeAsync(item)">@item.Title</button> }
+                    {
+                        <button class="all-day-event color-@item.Color"
+                                title="@DragTitle(item)" draggable="@(item.CanEdit ? "true" : "false")"
+                                data-calendar-event="@item.Id"
+                                @oncontextmenu="args => RequestContextMenu(item, args)"
+                                @oncontextmenu:preventDefault="@item.CanEdit"
+                                @onclick="() => EventSelected.InvokeAsync(item)">@item.Title</button>
+                    }
                 </div>
             }
         </div>
@@ -26,20 +33,39 @@
     <div class="time-scroll">
         <div class="time-grid" style="--day-count:@Days.Count">
             <div class="hour-labels">
-                @foreach (var hour in Hours) { <span style="top:@(hour * 64)px">@(hour == 0 ? "" : DateTime.Today.AddHours(hour).ToString("h tt"))</span> }
+                @foreach (var hour in Hours) { <span style="top:@(hour * PixelsPerHour)px">@(hour == 0 ? "" : DateTime.Today.AddHours(hour).ToString("h tt"))</span> }
             </div>
             @foreach (var day in Days)
             {
                 <div class="day-column @(day == DateTime.Today ? "today-column" : "")">
-                    @foreach (var hour in Hours)
+                    @foreach (var halfHour in HalfHours)
                     {
-                        var slot = day.AddHours(hour);
-                        <button class="hour-slot" aria-label="Create event at @slot.ToString("f")" @onclick="() => EmptySelected.InvokeAsync(slot)"></button>
+                        var slot = day.AddMinutes(halfHour * MinutesPerSlot);
+                        <button class="hour-slot"
+                                data-calendar-drop="time" data-drop-value="@slot.ToString("yyyy-MM-ddTHH:mm:ss")"
+                                aria-label="Create event at @slot.ToString("f")" @onclick="() => EmptySelected.InvokeAsync(slot)"
+                                ></button>
                     }
-                    @foreach (var item in Events.Where(e => !e.IsAllDay && e.Start.Date == day).OrderBy(e => e.Start))
+                    @foreach (var layout in LayoutEvents(day))
                     {
-                        <button class="time-event color-@item.Color" style="@EventStyle(item)" @onclick="() => EventSelected.InvokeAsync(item)">
-                            <strong>@item.Title</strong><span>@item.Start.ToString("h:mm tt") – @item.End.ToString("h:mm tt")</span>
+                        var item = layout.Item;
+                        <button class="time-event color-@item.Color @(layout.IsCompact ? "time-event-short" : "")"
+                                style="@EventStyle(layout)" title="@EventTitle(item)"
+                                aria-label="@EventTitle(item)"
+                                draggable="@(item.CanEdit ? "true" : "false")"
+                                data-calendar-event="@item.Id"
+                                @oncontextmenu="args => RequestContextMenu(item, args)"
+                                @oncontextmenu:preventDefault="@item.CanEdit"
+                                @onclick="() => EventSelected.InvokeAsync(item)">
+                            @if (layout.IsCompact)
+                            {
+                                <span class="time-event-compact"><strong>@item.Title</strong> · @TimeRange(item, false)</span>
+                            }
+                            else
+                            {
+                                <strong class="time-event-title">@item.Title</strong>
+                                <span class="time-event-range">@TimeRange(item, true)</span>
+                            }
                         </button>
                     }
                     @if (day == DateTime.Today) { <div class="now-line" style="top:@NowTop()px"><span></span></div> }
@@ -55,13 +81,120 @@
     [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
     [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
     [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
+    [Parameter] public EventCallback<EventContextRequest> EventContextRequested { get; set; }
     private static readonly int[] Hours = Enumerable.Range(0, 24).ToArray();
+    private static readonly int[] HalfHours = Enumerable.Range(0, 48).ToArray();
+    private const int MinutesPerSlot = 30;
+    private const double PixelsPerHour = 72;
+    private const double PixelsPerMinute = PixelsPerHour / 60;
+    private const double MinimumEventHeight = 26;
     private IEnumerable<CalendarEvent> AllDayEvents => Events.Where(e => e.IsAllDay);
-    private static double NowTop() => (DateTime.Now.Hour + DateTime.Now.Minute / 60d) * 64;
-    private static string EventStyle(CalendarEvent item)
+    private static string DragTitle(CalendarEvent item) => item.CanEdit
+        ? $"{item.Title} — drag to move; hold Ctrl while dragging to copy"
+        : item.Title;
+    private Task RequestContextMenu(CalendarEvent item, MouseEventArgs args) => item.CanEdit
+        ? EventContextRequested.InvokeAsync(new EventContextRequest(item, args.ClientX, args.ClientY))
+        : Task.CompletedTask;
+    private static double NowTop() => (DateTime.Now.Hour + DateTime.Now.Minute / 60d) * PixelsPerHour;
+    private IReadOnlyList<EventLayout> LayoutEvents(DateTime day)
     {
-        var start = item.Start.TimeOfDay.TotalMinutes;
-        var duration = Math.Min(1440 - start, Math.Max(30, (item.End - item.Start).TotalMinutes));
-        return $"top:{start / 60 * 64 + 2:0.#}px;height:{Math.Max(28, duration / 60 * 64 - 4):0.#}px";
+        var candidates = Events
+            .Where(item => !item.IsAllDay && item.Start.Date == day)
+            .OrderBy(item => item.Start)
+            .ThenBy(item => item.End)
+            .Select(item =>
+            {
+                var startMinutes = item.Start.TimeOfDay.TotalMinutes;
+                var durationMinutes = Math.Min(1440 - startMinutes, (item.End - item.Start).TotalMinutes);
+                var top = startMinutes * PixelsPerMinute;
+                var naturalHeight = Math.Max(0, durationMinutes * PixelsPerMinute);
+                return new EventCandidate(
+                    item,
+                    top,
+                    Math.Max(MinimumEventHeight, naturalHeight),
+                    durationMinutes <= 30 || naturalHeight < 42);
+            })
+            .ToList();
+
+        var result = new List<EventLayout>(candidates.Count);
+        var group = new List<EventCandidate>();
+        var groupBottom = double.MinValue;
+        foreach (var candidate in candidates)
+        {
+            if (group.Count > 0 && candidate.Top >= groupBottom)
+            {
+                AddLayoutGroup(group, result);
+                group.Clear();
+                groupBottom = double.MinValue;
+            }
+
+            group.Add(candidate);
+            groupBottom = Math.Max(groupBottom, candidate.Top + candidate.Height);
+        }
+
+        AddLayoutGroup(group, result);
+        return result.OrderBy(layout => layout.Top).ThenBy(layout => layout.Lane).ToList();
     }
+
+    private static void AddLayoutGroup(IReadOnlyList<EventCandidate> group, ICollection<EventLayout> result)
+    {
+        if (group.Count == 0) return;
+
+        var laneBottoms = new List<double>();
+        var assignments = new List<(EventCandidate Candidate, int Lane)>(group.Count);
+        foreach (var candidate in group)
+        {
+            var lane = laneBottoms.FindIndex(bottom => bottom <= candidate.Top);
+            if (lane < 0)
+            {
+                lane = laneBottoms.Count;
+                laneBottoms.Add(candidate.Top + candidate.Height);
+            }
+            else
+            {
+                laneBottoms[lane] = candidate.Top + candidate.Height;
+            }
+            assignments.Add((candidate, lane));
+        }
+
+        foreach (var assignment in assignments)
+            result.Add(new EventLayout(
+                assignment.Candidate.Item,
+                assignment.Candidate.Top,
+                assignment.Candidate.Height,
+                assignment.Lane,
+                laneBottoms.Count,
+                assignment.Candidate.IsCompact));
+    }
+
+    private static string EventStyle(EventLayout layout)
+    {
+        var laneWidthPercent = 100d / layout.LaneCount;
+        var leftOffset = 4 - 8d * layout.Lane / layout.LaneCount;
+        var widthOffset = 8d / layout.LaneCount;
+        return FormattableString.Invariant(
+            $"top:{layout.Top:0.##}px;height:{layout.Height:0.##}px;left:calc({layout.Lane * laneWidthPercent:0.####}% + {leftOffset:0.##}px);width:calc({laneWidthPercent:0.####}% - {widthOffset:0.##}px);right:auto");
+    }
+
+    private static string EventTitle(CalendarEvent item) => item.CanEdit
+        ? $"{item.Title} — {TimeRange(item, true)}; drag to move, or hold Ctrl while dragging to copy"
+        : $"{item.Title} — {TimeRange(item, true)}";
+
+    private static string TimeRange(CalendarEvent item, bool spaced) => spaced
+        ? $"{item.Start:h:mm tt} – {item.End:h:mm tt}"
+        : $"{item.Start:h:mm tt}–{item.End:h:mm tt}";
+
+    private sealed record EventCandidate(
+        CalendarEvent Item,
+        double Top,
+        double Height,
+        bool IsCompact);
+
+    private sealed record EventLayout(
+        CalendarEvent Item,
+        double Top,
+        double Height,
+        int Lane,
+        int LaneCount,
+        bool IsCompact);
 }

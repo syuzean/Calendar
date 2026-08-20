@@ -12,6 +12,7 @@
         </header>
         <form @onsubmit="Submit" @onsubmit:preventDefault="true">
             <fieldset class="form-fields" disabled="@(!Event.CanEdit)">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="auth-error">@ErrorMessage</div> }
             <label class="field title-field">
                 <span>Event title</span>
                 <input autofocus placeholder="What are you planning?" @bind="Title" />
@@ -26,8 +27,8 @@
             @if (!IsAllDay)
             {
                 <div class="field-grid time-fields">
-                    <label class="field"><span>Starts</span><input type="time" value="@StartTimeText" @onchange="UpdateStartTime" /></label>
-                    <label class="field"><span>Ends</span><input type="time" value="@EndTimeText" @onchange="UpdateEndTime" /></label>
+                    <label class="field"><span>Starts</span><input type="time" step="1800" value="@StartTimeText" @onchange="UpdateStartTime" /></label>
+                    <label class="field"><span>Ends</span><input type="time" step="1800" value="@EndTimeText" @onchange="UpdateEndTime" /></label>
                 </div>
             }
             <label class="field">
@@ -77,9 +78,10 @@
 @code {
     [Parameter, EditorRequired] public CalendarEvent Event { get; set; } = new();
     [Parameter] public bool IsNew { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
     [Parameter] public EventCallback CloseRequested { get; set; }
     [Parameter] public EventCallback<CalendarEvent> SaveRequested { get; set; }
-    [Parameter] public EventCallback<Guid> DeleteRequested { get; set; }
+    [Parameter] public EventCallback<CalendarEvent> DeleteRequested { get; set; }
 
     private static readonly string[] Colors = ["violet", "blue", "green", "orange", "rose"];
     private string Title = string.Empty, DateText = string.Empty, StartTimeText = string.Empty, EndTimeText = string.Empty;
@@ -113,19 +115,25 @@
             start = date.Date.Add(startTime);
             end = date.Date.Add(endTime);
             if (end <= start) end = end.AddDays(1);
+            if (!IsHalfHourBoundary(start) || !IsHalfHourBoundary(end))
+            { Error = "Start and end times must be on the hour or half hour."; return; }
+            if (end - start < TimeSpan.FromMinutes(30))
+            { Error = "Events must be at least 30 minutes long."; return; }
         }
         await SaveRequested.InvokeAsync(new CalendarEvent
         {
             Id = Event.Id, Title = Title.Trim(), Start = start, End = end, IsAllDay = IsAllDay,
             Description = Description.Trim(), Color = Color, IsPublic = IsPublic, OwnerId = Event.OwnerId,
-            OwnerName = Event.OwnerName, CanEdit = true,
+            Version = Event.Version, OwnerName = Event.OwnerName, CanEdit = true,
             CollaboratorEmails = CollaboratorText.Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
         });
     }
 
     private Task Close() => CloseRequested.InvokeAsync();
-    private Task Delete() => DeleteRequested.InvokeAsync(Event.Id);
+    private Task Delete() => DeleteRequested.InvokeAsync(Event);
     private void UpdateDate(ChangeEventArgs args) => DateText = args.Value?.ToString() ?? string.Empty;
     private void UpdateStartTime(ChangeEventArgs args) => StartTimeText = args.Value?.ToString() ?? string.Empty;
     private void UpdateEndTime(ChangeEventArgs args) => EndTimeText = args.Value?.ToString() ?? string.Empty;
+    private static bool IsHalfHourBoundary(DateTime value) =>
+        value.Minute % 30 == 0 && value.Ticks % TimeSpan.TicksPerMinute == 0;
 }

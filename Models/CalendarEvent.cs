@@ -13,6 +13,7 @@ public sealed class CalendarEvent
     public string Color { get; set; } = "violet";
     public bool IsPublic { get; set; }
     public Guid OwnerId { get; set; }
+    public Guid Version { get; set; } = Guid.NewGuid();
     public AppUser? Owner { get; set; }
     public ICollection<EventParticipant> Participants { get; set; } = [];
 
@@ -32,6 +33,7 @@ public sealed class CalendarEvent
         Color = Color,
         IsPublic = IsPublic,
         OwnerId = OwnerId,
+        Version = Version,
         OwnerName = OwnerName,
         CanEdit = CanEdit,
         IsCollaborator = IsCollaborator,

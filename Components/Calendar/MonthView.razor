@@ -11,12 +11,18 @@
                 (item.IsAllDay ? item.End.Date > date : item.End.Date >= date))
                 .OrderByDescending(item => item.IsAllDay).ThenBy(item => item.Start).ToList();
             <div class="month-day @(date.Month != DisplayDate.Month ? "outside" : "") @(date == DateTime.Today ? "today" : "")"
+                 data-calendar-drop="day" data-drop-value="@date.ToString("yyyy-MM-dd")"
                  @onclick="() => EmptySelected.InvokeAsync(date.AddHours(9))">
                 <div class="day-number"><span>@date.Day</span></div>
                 <div class="day-events">
                     @foreach (var item in dayEvents.Take(3))
                     {
-                        <button class="month-event color-@item.Color" title="@item.Title" @onclick:stopPropagation="true" @onclick="() => EventSelected.InvokeAsync(item)">
+                        <button class="month-event color-@item.Color"
+                                title="@DragTitle(item)" draggable="@(item.CanEdit ? "true" : "false")"
+                                data-calendar-event="@item.Id"
+                                @oncontextmenu="args => RequestContextMenu(item, args)"
+                                @oncontextmenu:preventDefault="@item.CanEdit"
+                                @onclick:stopPropagation="true" @onclick="() => EventSelected.InvokeAsync(item)">
                             @if (!item.IsAllDay) { <span class="event-time">@item.Start.ToString("h:mm")</span> }
                             <span>@item.Title</span>
                         </button>
@@ -37,7 +43,14 @@
     [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
     [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
     [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
+    [Parameter] public EventCallback<EventContextRequest> EventContextRequested { get; set; }
     private static readonly string[] Weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+    private static string DragTitle(CalendarEvent item) => item.CanEdit
+        ? $"{item.Title} — drag to move; hold Ctrl while dragging to copy"
+        : item.Title;
+    private Task RequestContextMenu(CalendarEvent item, MouseEventArgs args) => item.CanEdit
+        ? EventContextRequested.InvokeAsync(new EventContextRequest(item, args.ClientX, args.ClientY))
+        : Task.CompletedTask;
     private IEnumerable<DateTime> Days
     {
         get
