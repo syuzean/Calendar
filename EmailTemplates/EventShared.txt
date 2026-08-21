@@ -1,0 +1,22 @@
+LUMA CALENDAR
+
+Hi {{RecipientName}},
+
+{{OrganizerName}} shared an event with you.
+
+{{EventTitle}}
+Date: {{EventDate}}
+Time: {{StartTime}}{{#EndTime}} – {{EndTime}}{{/EndTime}}
+Organizer: {{OrganizerName}}
+{{#Description}}
+Description:
+{{Description}}
+{{/Description}}
+{{#MeetingUrl}}
+{{MeetingProvider}}: {{MeetingUrl}}
+Join meeting: {{MeetingUrl}}
+{{/MeetingUrl}}
+
+Open in LUMA: {{EventUrl}}
+
+This invitation was sent to {{RecipientEmail}}.

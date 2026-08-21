@@ -128,6 +128,8 @@
     private double ContextMenuX, ContextMenuY;
     private bool ConfirmContextDelete, ContextMenuNeedsFocus, ShowContextShare, ContextShareNeedsFocus, ContextShareSucceeded;
     private string ContextShareEmail = string.Empty, ContextShareFeedback = string.Empty, ContextShareFeedbackKind = string.Empty;
+    [SupplyParameterFromQuery(Name = "event")] public Guid? RequestedEventId { get; set; }
+    [SupplyParameterFromQuery(Name = "invitationError")] public string? InvitationError { get; set; }
 
     private IReadOnlyList<CalendarEvent> VisibleEvents => Scope switch
     {
@@ -144,6 +146,14 @@
         if (firstRender)
         {
             await Store.InitializeAsync();
+            OperationError = InvitationError;
+            if (RequestedEventId is { } eventId)
+            {
+                if (Store.Events.SingleOrDefault(item => item.Id == eventId) is { } requestedEvent)
+                    OpenEvent(requestedEvent);
+                else
+                    OperationError = "That shared event is not available to this account.";
+            }
             DragDropReference = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("lumaCalendarDrag.initialize", DragDropReference);
             StateHasChanged();
@@ -190,7 +200,8 @@
     private void SelectMiniDay(DateTime day) { DisplayDate = day; MiniDate = new(day.Year, day.Month, 1); }
     private void OpenDay(DateTime day) { DisplayDate = day; CurrentView = "Day"; }
     private void CreateFromButton() => CreateEvent(DisplayDate.Date.AddHours(9));
-    private void CreateEvent(DateTime start) { OperationError = null; EditingEvent = new CalendarEvent { Start = start, End = start.AddHours(1), Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
+    private void CreateEvent(DateTime start) => CreateEvent(start, start.AddHours(1));
+    private void CreateEvent(DateTime start, DateTime end) { OperationError = null; EditingEvent = new CalendarEvent { Start = start, End = end, Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
     private void OpenEvent(CalendarEvent item) { OperationError = null; EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
     private void CloseDialog() { OperationError = null; EditingEvent = null; }
     private async Task SaveEvent(CalendarEvent item)
@@ -349,6 +360,27 @@
                 $"left:min(calc(100vw - {width}px), {Math.Max(8, ContextMenuX):0.##}px);top:min(calc(100vh - {height}px), {Math.Max(8, ContextMenuY):0.##}px)");
         }
     }
+    [JSInvokable]
+    public async Task HandleCalendarTimeSelection(string startValue, string endValue)
+    {
+        const string format = "yyyy-MM-ddTHH:mm:ss";
+        if (!DateTime.TryParseExact(startValue, format, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var start) ||
+            !DateTime.TryParseExact(endValue, format, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var end) ||
+            !VisibleDays.Contains(start.Date) || end <= start || end - start > TimeSpan.FromDays(1) ||
+            start.Minute % 30 != 0 || end.Minute % 30 != 0 ||
+            start.Ticks % TimeSpan.TicksPerMinute != 0 || end.Ticks % TimeSpan.TicksPerMinute != 0)
+        {
+            OperationError = "That time selection is no longer valid. Please choose a time from the calendar again.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        CreateEvent(start, end);
+        await InvokeAsync(StateHasChanged);
+    }
+
     [JSInvokable]
     public async Task HandleCalendarDrop(string eventId, string targetValue, string targetKind, bool copy)
     {

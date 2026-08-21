@@ -10,4 +10,5 @@ public sealed class AppUser
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
     public ICollection<CalendarEvent> OwnedEvents { get; set; } = [];
     public ICollection<EventParticipant> Participations { get; set; } = [];
+    public ICollection<EventInvitation> ClaimedInvitations { get; set; } = [];
 }

@@ -21,7 +21,10 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> options) : IEmailSende
         mimeMessage.From.Add(new MailboxAddress(_options.FromName, _options.FromAddress));
         mimeMessage.To.Add(MailboxAddress.Parse(message.RecipientAddress));
         mimeMessage.Subject = message.Subject;
-        mimeMessage.Body = new TextPart("plain") { Text = message.Body };
+        var bodyBuilder = new BodyBuilder { TextBody = message.PlainTextBody };
+        if (!string.IsNullOrWhiteSpace(message.HtmlBody))
+            bodyBuilder.HtmlBody = message.HtmlBody;
+        mimeMessage.Body = bodyBuilder.ToMessageBody();
 
         using var client = new SmtpClient();
         await client.ConnectAsync(

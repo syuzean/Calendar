@@ -1,38 +1,42 @@
-using System.Globalization;
+using Calendar.Services;
 
 namespace Calendar.Services.Email;
 
-public sealed class EventShareNotifier(IEmailSender emailSender) : IEventShareNotifier
+public sealed class EventShareNotifier(
+    IEmailSender emailSender,
+    IEmailTemplateRenderer templateRenderer) : IEventShareNotifier
 {
     public Task NotifyAsync(EventShareNotification notification, CancellationToken cancellationToken = default)
     {
-        var subject = $"{notification.OrganizerName} shared an event with you";
-        var body = $"""
-            {notification.OrganizerName} shared an event with you on LUMA Calendar.
-
-            Event: {notification.EventTitle}
-            When: {FormatWhen(notification)}
-
-            This shared event is now visible in your LUMA Calendar.
-            """;
+        var rendered = templateRenderer.RenderEventShared(new EventSharedTemplateData(
+            notification.RecipientName,
+            notification.RecipientEmail,
+            notification.OrganizerName,
+            notification.EventTitle,
+            notification.Start,
+            notification.End,
+            notification.IsAllDay,
+            notification.Description,
+            EventColor(notification.EventColor),
+            notification.EventUrl,
+            notification.MeetingUrl,
+            MeetingUrlHelper.ProviderName(notification.MeetingUrl)));
 
         return emailSender.SendAsync(
-            new EmailMessage(notification.RecipientEmail, subject, body),
+            new EmailMessage(
+                notification.RecipientEmail,
+                rendered.Subject,
+                rendered.PlainTextBody,
+                rendered.HtmlBody),
             cancellationToken);
     }
 
-    private static string FormatWhen(EventShareNotification notification)
+    private static string EventColor(string color) => color.ToLowerInvariant() switch
     {
-        if (notification.IsAllDay)
-            return notification.Start.Date == notification.End.Date.AddDays(-1)
-                ? notification.Start.ToString("MMMM d, yyyy (all day)", CultureInfo.InvariantCulture)
-                : $"{Format(notification.Start, "MMMM d, yyyy")} – {Format(notification.End.AddDays(-1), "MMMM d, yyyy")} (all day)";
-
-        return notification.Start.Date == notification.End.Date
-            ? $"{Format(notification.Start, "MMMM d, yyyy, h:mm tt")} – {Format(notification.End, "h:mm tt")}"
-            : $"{Format(notification.Start, "MMMM d, yyyy, h:mm tt")} – {Format(notification.End, "MMMM d, yyyy, h:mm tt")}";
-    }
-
-    private static string Format(DateTime value, string format) =>
-        value.ToString(format, CultureInfo.InvariantCulture);
+        "blue" => "#3d8fea",
+        "green" => "#38a878",
+        "orange" => "#ea8b3f",
+        "rose" => "#df5e89",
+        _ => "#7654ee"
+    };
 }

@@ -10,12 +10,14 @@ public sealed class CalendarEvent
     public DateTime End { get; set; }
     public bool IsAllDay { get; set; }
     public string Description { get; set; } = string.Empty;
+    public string MeetingUrl { get; set; } = string.Empty;
     public string Color { get; set; } = "violet";
     public bool IsPublic { get; set; }
     public Guid OwnerId { get; set; }
     public Guid Version { get; set; } = Guid.NewGuid();
     public AppUser? Owner { get; set; }
     public ICollection<EventParticipant> Participants { get; set; } = [];
+    public ICollection<EventInvitation> Invitations { get; set; } = [];
 
     [NotMapped] public string OwnerName { get; set; } = string.Empty;
     [NotMapped] public bool CanEdit { get; set; }
@@ -30,6 +32,7 @@ public sealed class CalendarEvent
         End = End,
         IsAllDay = IsAllDay,
         Description = Description,
+        MeetingUrl = MeetingUrl,
         Color = Color,
         IsPublic = IsPublic,
         OwnerId = OwnerId,

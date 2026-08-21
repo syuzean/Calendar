@@ -92,6 +92,57 @@ public sealed class CalendarStoreTests
         Assert.Empty(await db.Events.ToListAsync());
     }
 
+    [Fact]
+    public async Task CreateEvent_WithValidMeetingUrl_PersistsIt()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.MeetingUrl = "  https://meet.google.com/abc-defg-hij  ";
+
+        await store.CreateAsync(item);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal("https://meet.google.com/abc-defg-hij", (await db.Events.SingleAsync()).MeetingUrl);
+        Assert.Equal("https://meet.google.com/abc-defg-hij", store.Events.Single().MeetingUrl);
+    }
+
+    [Fact]
+    public async Task UpdateEvent_CanEditAndRemoveMeetingUrl()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.MeetingUrl = "https://zoom.us/j/123456789";
+        await store.CreateAsync(item);
+        var edit = store.Events.Single().Copy();
+        edit.MeetingUrl = string.Empty;
+
+        await store.UpdateAsync(edit);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty((await db.Events.SingleAsync()).MeetingUrl);
+        Assert.Empty(store.Events.Single().MeetingUrl);
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("ftp://meet.example.test/room")]
+    [InlineData("meet.google.com/abc-defg-hij")]
+    [InlineData("https://user:password@meet.google.com/abc-defg-hij")]
+    public async Task InvalidMeetingUrl_IsRejectedBeforePersistence(string meetingUrl)
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.MeetingUrl = meetingUrl;
+
+        await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(item));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.Events.ToListAsync());
+    }
+
     [Theory]
     [InlineData(9, 15, 10, 0)]
     [InlineData(9, 0, 10, 15)]
@@ -193,6 +244,21 @@ public sealed class CalendarStoreTests
     }
 
     [Fact]
+    public async Task CopyEvent_PreservesMeetingUrl()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.MeetingUrl = "https://teams.microsoft.com/l/meetup-join/room";
+        await store.CreateAsync(item);
+        var original = store.Events.Single();
+
+        var copyId = await store.CopyAsync(original.Id, original.Version, original.Start.AddDays(1));
+
+        Assert.Equal(item.MeetingUrl, store.Events.Single(saved => saved.Id == copyId).MeetingUrl);
+    }
+
+    [Fact]
     public async Task CopyEvent_DoesNotCopyParticipants()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -243,18 +309,47 @@ public sealed class CalendarStoreTests
     {
         var fixture = await TestFixture.CreateAsync();
         var store = await fixture.CreateStoreAsync(fixture.Owner);
-        await store.CreateAsync(NewEvent());
+        var created = NewEvent();
+        created.MeetingUrl = "https://meet.google.com/abc-defg-hij";
+        await store.CreateAsync(created);
         var item = store.Events.Single().Copy();
         item.CollaboratorEmails.Add(fixture.OtherUser.Email);
 
         await store.UpdateAsync(item);
 
         var notification = Assert.Single(fixture.Notifier.Notifications);
+        Assert.Equal(fixture.OtherUser.Name, notification.RecipientName);
         Assert.Equal(fixture.OtherUser.Email, notification.RecipientEmail);
         Assert.Equal("Planning session", notification.EventTitle);
         Assert.Equal(item.Start, notification.Start);
         Assert.Equal(item.End, notification.End);
         Assert.Equal(fixture.Owner.Name, notification.OrganizerName);
+        Assert.Contains(item.Id.ToString(), notification.EventUrl);
+        Assert.Equal(created.MeetingUrl, notification.MeetingUrl);
+    }
+
+    [Fact]
+    public async Task AddingUnregisteredRecipient_CreatesPendingInvitationAndNotifiesOnce()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.CollaboratorEmails.Add("future-user@luma.test");
+
+        await store.CreateAsync(item);
+        var edit = store.Events.Single().Copy();
+        edit.Title = "Edited after invitation";
+        await store.UpdateAsync(edit);
+
+        await using var db = fixture.CreateDbContext();
+        var invitation = Assert.Single(await db.EventInvitations.ToListAsync());
+        Assert.Equal("FUTURE-USER@LUMA.TEST", invitation.NormalizedRecipientEmail);
+        Assert.Equal(fixture.Owner.Id, (await db.Events.SingleAsync()).OwnerId);
+        Assert.Null(invitation.ClaimedUtc);
+        Assert.True(invitation.ExpiresUtc > invitation.CreatedUtc);
+        var notification = Assert.Single(fixture.Notifier.Notifications);
+        Assert.Equal("future-user@luma.test", notification.RecipientEmail);
+        Assert.Contains("/invitation?token=", notification.EventUrl);
     }
 
     [Fact]
@@ -287,6 +382,23 @@ public sealed class CalendarStoreTests
 
         await using var db = fixture.CreateDbContext();
         Assert.Single(await db.EventParticipants.ToListAsync());
+        Assert.Contains("event was shared", store.LastNotice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task NotificationFailure_DoesNotUndoPendingInvitation()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        fixture.Notifier.ThrowOnNotify = true;
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.CollaboratorEmails.Add("future-user@luma.test");
+
+        await store.CreateAsync(item);
+
+        await using var db = fixture.CreateDbContext();
+        var invitation = Assert.Single(await db.EventInvitations.ToListAsync());
+        Assert.Equal(EventInvitationStatus.Pending, invitation.Status);
         Assert.Contains("event was shared", store.LastNotice, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -327,6 +439,7 @@ public sealed class CalendarStoreTests
                 factory,
                 new TestAuthenticationStateProvider(user),
                 Notifier,
+                new TestEventLinkBuilder(),
                 NullLogger<CalendarStore>.Instance);
             await store.InitializeAsync();
             return store;
@@ -372,5 +485,11 @@ public sealed class CalendarStoreTests
             Notifications.Add(notification);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class TestEventLinkBuilder : IEventLinkBuilder
+    {
+        public string Event(Guid eventId) => $"https://luma.test/?event={eventId:D}";
+        public string Invitation(string token) => $"https://luma.test/invitation?token={token}";
     }
 }

@@ -30,24 +30,25 @@ public static class AccountEndpoints
         var name = form["name"].ToString().Trim();
         var email = form["email"].ToString().Trim();
         var password = form["password"].ToString();
+        var returnUrl = SafeReturnUrl(form["returnUrl"].ToString());
 
         if (name.Length is < 2 or > 80)
-            return RedirectWithError("/register", "Enter a name between 2 and 80 characters.");
+            return RedirectWithError("/register", "Enter a name between 2 and 80 characters.", returnUrl);
         if (!IsValidEmail(email))
-            return RedirectWithError("/register", "Enter a valid email address.");
+            return RedirectWithError("/register", "Enter a valid email address.", returnUrl);
         if (password.Length < 8)
-            return RedirectWithError("/register", "Password must contain at least 8 characters.");
+            return RedirectWithError("/register", "Password must contain at least 8 characters.", returnUrl);
 
         var normalizedEmail = NormalizeEmail(email);
         if (await db.Users.AnyAsync(user => user.NormalizedEmail == normalizedEmail))
-            return RedirectWithError("/register", "An account with this email already exists.");
+            return RedirectWithError("/register", "An account with this email already exists.", returnUrl);
 
         var user = new AppUser { Name = name, Email = email, NormalizedEmail = normalizedEmail };
         user.PasswordHash = passwordHasher.HashPassword(user, password);
         db.Users.Add(user);
         await db.SaveChangesAsync();
         await SignInAsync(context, user, true);
-        return Results.LocalRedirect("/");
+        return Results.LocalRedirect(returnUrl);
     }
 
     private static async Task<IResult> LoginAsync(

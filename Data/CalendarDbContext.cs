@@ -1,4 +1,5 @@
 using Calendar.Models;
+using Calendar.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Calendar.Data;
@@ -8,6 +9,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<CalendarEvent> Events => Set<CalendarEvent>();
     public DbSet<EventParticipant> EventParticipants => Set<EventParticipant>();
+    public DbSet<EventInvitation> EventInvitations => Set<EventInvitation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +26,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
         {
             entity.Property(item => item.Title).HasMaxLength(180);
             entity.Property(item => item.Description).HasMaxLength(4000);
+            entity.Property(item => item.MeetingUrl).HasMaxLength(MeetingUrlHelper.MaximumLength);
             entity.Property(item => item.Color).HasMaxLength(20);
             entity.Property(item => item.Version).IsConcurrencyToken();
             entity.HasIndex(item => item.Start);
@@ -44,6 +47,28 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(item => item.User)
                 .WithMany(user => user.Participations)
                 .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<EventInvitation>(entity =>
+        {
+            entity.HasIndex(invitation => invitation.TokenHash).IsUnique();
+            entity.HasIndex(invitation => new { invitation.EventId, invitation.NormalizedRecipientEmail }).IsUnique();
+            entity.HasIndex(invitation => new { invitation.ClaimedByUserId, invitation.Status });
+            entity.Property(invitation => invitation.RecipientEmail).HasColumnName("InvitedEmail").HasMaxLength(254);
+            entity.Property(invitation => invitation.NormalizedRecipientEmail).HasColumnName("NormalizedEmail").HasMaxLength(254);
+            entity.Property(invitation => invitation.ClaimedByUserId).HasColumnName("InvitedUserId");
+            entity.Property(invitation => invitation.ClaimedUtc).HasColumnName("RespondedUtc");
+            entity.Property(invitation => invitation.TokenHash).HasMaxLength(64);
+            entity.Property(invitation => invitation.RowVersion).IsRowVersion();
+            entity.Property(invitation => invitation.EmailLastError).HasMaxLength(1000);
+            entity.HasOne(invitation => invitation.Event)
+                .WithMany(calendarEvent => calendarEvent.Invitations)
+                .HasForeignKey(invitation => invitation.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(invitation => invitation.ClaimedByUser)
+                .WithMany(user => user.ClaimedInvitations)
+                .HasForeignKey(invitation => invitation.ClaimedByUserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
     }

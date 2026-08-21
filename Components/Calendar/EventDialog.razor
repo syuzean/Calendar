@@ -1,4 +1,5 @@
 @using global::Calendar.Models
+@using global::Calendar.Services
 
 <div class="dialog-backdrop" role="presentation" @onclick="Close">
     <section class="event-dialog" role="dialog" aria-modal="true" aria-labelledby="event-dialog-title" @onclick:stopPropagation="true">
@@ -31,6 +32,17 @@
                     <label class="field"><span>Ends</span><input type="time" step="1800" value="@EndTimeText" @onchange="UpdateEndTime" /></label>
                 </div>
             }
+            <label class="field meeting-link-field">
+                <span>Meeting link <em>optional · HTTPS recommended</em></span>
+                <input type="url" inputmode="url" maxlength="@MeetingUrlHelper.MaximumLength"
+                       placeholder="https://meet.google.com/..." @bind="MeetingUrl" />
+                @if (MeetingUrlHelper.TryGetSafeUri(MeetingUrl, out var meetingUri))
+                {
+                    <a class="meeting-join-action" href="@meetingUri!.AbsoluteUri" target="_blank" rel="noopener noreferrer">
+                        ↗ @MeetingUrlHelper.JoinLabel(MeetingUrl)
+                    </a>
+                }
+            </label>
             <label class="field">
                 <span>Notes <em>optional</em></span>
                 <textarea rows="3" placeholder="Add context, links, or a location…" @bind="Description"></textarea>
@@ -40,7 +52,7 @@
                 <label class="field collaborators-field">
                     <span>Invite collaborators <em>optional</em></span>
                     <textarea rows="2" placeholder="alex@example.com, sam@example.com" @bind="CollaboratorText"></textarea>
-                    <small>Enter the email addresses of registered Luma users, separated by commas.</small>
+                    <small>Registered users get access immediately; others receive a secure invitation.</small>
                 </label>
             </div>
             <fieldset class="color-picker">
@@ -85,7 +97,7 @@
 
     private static readonly string[] Colors = ["violet", "blue", "green", "orange", "rose"];
     private string Title = string.Empty, DateText = string.Empty, StartTimeText = string.Empty, EndTimeText = string.Empty;
-    private string Description = string.Empty, Color = "violet", Error = string.Empty, CollaboratorText = string.Empty;
+    private string Description = string.Empty, MeetingUrl = string.Empty, Color = "violet", Error = string.Empty, CollaboratorText = string.Empty;
     private bool IsAllDay, IsPublic, ConfirmDelete;
 
     protected override void OnInitialized()
@@ -95,6 +107,7 @@
         StartTimeText = Event.Start.ToString("HH:mm");
         EndTimeText = Event.End.ToString("HH:mm");
         Description = Event.Description;
+        MeetingUrl = Event.MeetingUrl;
         Color = Event.Color;
         IsAllDay = Event.IsAllDay;
         IsPublic = Event.IsPublic;
@@ -120,10 +133,12 @@
             if (end - start < TimeSpan.FromMinutes(30))
             { Error = "Events must be at least 30 minutes long."; return; }
         }
+        if (!MeetingUrlHelper.TryNormalize(MeetingUrl, out var normalizedMeetingUrl, out var meetingUrlError))
+        { Error = meetingUrlError!; return; }
         await SaveRequested.InvokeAsync(new CalendarEvent
         {
             Id = Event.Id, Title = Title.Trim(), Start = start, End = end, IsAllDay = IsAllDay,
-            Description = Description.Trim(), Color = Color, IsPublic = IsPublic, OwnerId = Event.OwnerId,
+            Description = Description.Trim(), MeetingUrl = normalizedMeetingUrl, Color = Color, IsPublic = IsPublic, OwnerId = Event.OwnerId,
             Version = Event.Version, OwnerName = Event.OwnerName, CanEdit = true,
             CollaboratorEmails = CollaboratorText.Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
         });

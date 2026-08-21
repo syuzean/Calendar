@@ -1,12 +1,18 @@
 @using global::Calendar.Models
+@using global::Calendar.Services
+@implements IDisposable
+
+@{ var currentMoment = DateTime.Now; }
 
 <div class="time-view">
     <div class="time-header" style="--day-count:@Days.Count">
         <div class="time-gutter"></div>
         @foreach (var day in Days)
         {
-            <button class="time-day-header @(day == DateTime.Today ? "today" : "")" @onclick="() => DaySelected.InvokeAsync(day)">
-                <span>@day.ToString("ddd").ToUpperInvariant()</span><strong>@day.Day</strong>
+            <button class="time-day-header @(day == currentMoment.Date ? "today" : "")"
+                    aria-current="@(day == currentMoment.Date ? "date" : null)" @onclick="() => DaySelected.InvokeAsync(day)">
+                <span class="time-day-name">@day.ToString("ddd").ToUpperInvariant() @if (day == currentMoment.Date) { <em>Today</em> }</span>
+                <strong>@day.Day</strong>
             </button>
         }
     </div>
@@ -37,38 +43,55 @@
             </div>
             @foreach (var day in Days)
             {
-                <div class="day-column @(day == DateTime.Today ? "today-column" : "")">
+                <div class="day-column @(day == currentMoment.Date ? "today-column" : "")"
+                     data-calendar-day="@day.ToString("yyyy-MM-ddT00:00:00")">
+                    @if (day == currentMoment.Date)
+                    {
+                        <div class="current-hour-spotlight" style="top:@CurrentHourTop(currentMoment)px" aria-hidden="true"></div>
+                    }
                     @foreach (var halfHour in HalfHours)
                     {
                         var slot = day.AddMinutes(halfHour * MinutesPerSlot);
                         <button class="hour-slot"
                                 data-calendar-drop="time" data-drop-value="@slot.ToString("yyyy-MM-ddTHH:mm:ss")"
+                                data-slot-index="@halfHour" data-time-label="@slot.ToString("h:mm tt")"
                                 aria-label="Create event at @slot.ToString("f")" @onclick="() => EmptySelected.InvokeAsync(slot)"
                                 ></button>
                     }
                     @foreach (var layout in LayoutEvents(day))
                     {
                         var item = layout.Item;
-                        <button class="time-event color-@item.Color @(layout.IsCompact ? "time-event-short" : "")"
-                                style="@EventStyle(layout)" title="@EventTitle(item)"
-                                aria-label="@EventTitle(item)"
-                                draggable="@(item.CanEdit ? "true" : "false")"
-                                data-calendar-event="@item.Id"
-                                @oncontextmenu="args => RequestContextMenu(item, args)"
-                                @oncontextmenu:preventDefault="@item.CanEdit"
-                                @onclick="() => EventSelected.InvokeAsync(item)">
-                            @if (layout.IsCompact)
+                        <div class="time-event-shell" style="@EventStyle(layout)">
+                            <button class="time-event color-@item.Color @(layout.IsCompact ? "time-event-short" : "")"
+                                    title="@EventTitle(item)" aria-label="@EventTitle(item)"
+                                    draggable="@(item.CanEdit ? "true" : "false")"
+                                    data-calendar-event="@item.Id"
+                                    @oncontextmenu="args => RequestContextMenu(item, args)"
+                                    @oncontextmenu:preventDefault="@item.CanEdit"
+                                    @onclick="() => EventSelected.InvokeAsync(item)">
+                                @if (layout.IsCompact)
+                                {
+                                    <span class="time-event-compact"><strong>@item.Title</strong> · @TimeRange(item, false)</span>
+                                }
+                                else
+                                {
+                                    <strong class="time-event-title">@item.Title</strong>
+                                    <span class="time-event-range">@TimeRange(item, true)</span>
+                                }
+                            </button>
+                            @if (layout.Height >= 68 && MeetingUrlHelper.TryGetSafeUri(item.MeetingUrl, out var meetingUri))
                             {
-                                <span class="time-event-compact"><strong>@item.Title</strong> · @TimeRange(item, false)</span>
+                                <a class="time-event-join" href="@meetingUri!.AbsoluteUri" target="_blank" rel="noopener noreferrer"
+                                   title="@MeetingUrlHelper.JoinLabel(item.MeetingUrl)" aria-label="@MeetingUrlHelper.JoinLabel(item.MeetingUrl)">↗ Join meeting</a>
                             }
-                            else
-                            {
-                                <strong class="time-event-title">@item.Title</strong>
-                                <span class="time-event-range">@TimeRange(item, true)</span>
-                            }
-                        </button>
+                        </div>
                     }
-                    @if (day == DateTime.Today) { <div class="now-line" style="top:@NowTop()px"><span></span></div> }
+                    @if (day == currentMoment.Date)
+                    {
+                        <div class="now-line" style="top:@NowTop(currentMoment)px" aria-label="Current time @currentMoment.ToString("h:mm tt")">
+                            <span class="now-dot"></span><span class="now-label">NOW · @currentMoment.ToString("h:mm tt")</span>
+                        </div>
+                    }
                 </div>
             }
         </div>
@@ -88,6 +111,9 @@
     private const double PixelsPerHour = 72;
     private const double PixelsPerMinute = PixelsPerHour / 60;
     private const double MinimumEventHeight = 26;
+    private const double EventOuterMargin = 4;
+    private const double OverlapColumnGap = 8;
+    private System.Threading.Timer? ClockTimer;
     private IEnumerable<CalendarEvent> AllDayEvents => Events.Where(e => e.IsAllDay);
     private static string DragTitle(CalendarEvent item) => item.CanEdit
         ? $"{item.Title} — drag to move; hold Ctrl while dragging to copy"
@@ -95,7 +121,15 @@
     private Task RequestContextMenu(CalendarEvent item, MouseEventArgs args) => item.CanEdit
         ? EventContextRequested.InvokeAsync(new EventContextRequest(item, args.ClientX, args.ClientY))
         : Task.CompletedTask;
-    private static double NowTop() => (DateTime.Now.Hour + DateTime.Now.Minute / 60d) * PixelsPerHour;
+    protected override void OnInitialized()
+    {
+        var now = DateTime.Now;
+        var untilNextMinute = TimeSpan.FromSeconds(60 - now.Second);
+        ClockTimer = new System.Threading.Timer(_ => _ = InvokeAsync(StateHasChanged), null, untilNextMinute, TimeSpan.FromMinutes(1));
+    }
+
+    private static double NowTop(DateTime now) => (now.Hour + now.Minute / 60d) * PixelsPerHour;
+    private static double CurrentHourTop(DateTime now) => now.Hour * PixelsPerHour;
     private IReadOnlyList<EventLayout> LayoutEvents(DateTime day)
     {
         var candidates = Events
@@ -170,8 +204,9 @@
     private static string EventStyle(EventLayout layout)
     {
         var laneWidthPercent = 100d / layout.LaneCount;
-        var leftOffset = 4 - 8d * layout.Lane / layout.LaneCount;
-        var widthOffset = 8d / layout.LaneCount;
+        var reservedWidth = EventOuterMargin * 2 + OverlapColumnGap * (layout.LaneCount - 1);
+        var widthOffset = reservedWidth / layout.LaneCount;
+        var leftOffset = EventOuterMargin + layout.Lane * (OverlapColumnGap - widthOffset);
         return FormattableString.Invariant(
             $"top:{layout.Top:0.##}px;height:{layout.Height:0.##}px;left:calc({layout.Lane * laneWidthPercent:0.####}% + {leftOffset:0.##}px);width:calc({laneWidthPercent:0.####}% - {widthOffset:0.##}px);right:auto");
     }
@@ -183,6 +218,8 @@
     private static string TimeRange(CalendarEvent item, bool spaced) => spaced
         ? $"{item.Start:h:mm tt} – {item.End:h:mm tt}"
         : $"{item.Start:h:mm tt}–{item.End:h:mm tt}";
+
+    public void Dispose() => ClockTimer?.Dispose();
 
     private sealed record EventCandidate(
         CalendarEvent Item,

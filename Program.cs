@@ -40,7 +40,12 @@ namespace Calendar
                 options.Password = Environment.GetEnvironmentVariable(SmtpOptions.PasswordEnvironmentVariable) ?? string.Empty;
             });
             builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+            builder.Services.Configure<EmailLinkOptions>(builder.Configuration.GetSection(EmailLinkOptions.SectionName));
+            builder.Services.AddSingleton<IEventLinkBuilder, EventLinkBuilder>();
+            builder.Services.AddSingleton<IEmailTemplateRenderer>(_ =>
+                new FileEmailTemplateRenderer(Path.Combine(builder.Environment.ContentRootPath, "EmailTemplates")));
             builder.Services.AddSingleton<IEventShareNotifier, EventShareNotifier>();
+            builder.Services.AddScoped<IEventInvitationService, EventInvitationService>();
             builder.Services.AddScoped<CalendarStore>();
 
             var app = builder.Build();
@@ -69,6 +74,7 @@ namespace Calendar
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode();
             app.MapAccountEndpoints();
+            app.MapInvitationEndpoints();
 
             app.Run();
         }

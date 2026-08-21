@@ -1,0 +1,1 @@
+{{OrganizerName}} shared “{{EventTitle}}” with you

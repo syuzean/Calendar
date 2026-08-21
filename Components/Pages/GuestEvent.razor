@@ -1,0 +1,71 @@
+@page "/guest-event"
+@attribute [AllowAnonymous]
+@using global::Calendar.Services
+@inject IEventInvitationService InvitationService
+
+<PageTitle>Shared event · Luma</PageTitle>
+<HeadContent><meta name="robots" content="noindex,nofollow" /></HeadContent>
+
+<main class="guest-event-page">
+    <section class="guest-event-card">
+        <header class="guest-event-header">
+            <a class="auth-brand" href="/login"><span class="brand-mark">L</span><span>Luma</span></a>
+            <span>Guest view</span>
+        </header>
+        @if (Result?.Status == InvitationStatus.Valid && Result.Event is { } sharedEvent)
+        {
+            <div class="guest-event-accent"></div>
+            <div class="guest-event-content">
+                <span class="eyebrow">SHARED EVENT</span>
+                <h1>@sharedEvent.Title</h1>
+                <dl class="guest-event-details">
+                    <div><dt>Date</dt><dd>@EventDate(sharedEvent)</dd></div>
+                    <div><dt>Time</dt><dd>@EventTime(sharedEvent)</dd></div>
+                    <div><dt>Organizer</dt><dd>@sharedEvent.OrganizerName</dd></div>
+                </dl>
+                @if (!string.IsNullOrWhiteSpace(sharedEvent.Description))
+                {
+                    <div class="guest-event-description">@sharedEvent.Description</div>
+                }
+                @if (MeetingUrlHelper.TryGetSafeUri(sharedEvent.MeetingUrl, out var meetingUri))
+                {
+                    <a class="guest-meeting-action" href="@meetingUri!.AbsoluteUri" target="_blank" rel="noopener noreferrer">
+                        ↗ @MeetingUrlHelper.JoinLabel(sharedEvent.MeetingUrl)
+                    </a>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="guest-event-error">
+                <span class="eyebrow">INVITATION UNAVAILABLE</span>
+                <h1>We can’t open this shared event.</h1>
+                <p>@ErrorMessage</p>
+                <a class="secondary-button" href="/login">Go to sign in</a>
+            </div>
+        }
+    </section>
+</main>
+
+@code {
+    [SupplyParameterFromQuery] public string? Token { get; set; }
+    private GuestEventResult? Result;
+    private string ErrorMessage => Result?.Status == InvitationStatus.Expired
+        ? "This invitation has expired. Ask the organizer to share the event again."
+        : "This invitation is invalid or is no longer available.";
+
+    protected override async Task OnParametersSetAsync() =>
+        Result = await InvitationService.GetGuestEventAsync(Token ?? string.Empty);
+
+    private static string EventDate(GuestEventView item)
+    {
+        var finalDate = item.IsAllDay ? item.End.AddDays(-1) : item.End;
+        return item.Start.Date == finalDate.Date
+            ? item.Start.ToString("dddd, MMMM d, yyyy")
+            : $"{item.Start:MMMM d, yyyy} – {finalDate:MMMM d, yyyy}";
+    }
+
+    private static string EventTime(GuestEventView item) => item.IsAllDay
+        ? "All day"
+        : $"{item.Start:h:mm tt} – {item.End:h:mm tt}";
+}

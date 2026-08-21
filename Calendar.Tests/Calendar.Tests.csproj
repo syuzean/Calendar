@@ -22,4 +22,8 @@
     <ProjectReference Include="..\Calendar.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\EmailTemplates\**\*" Link="EmailTemplates\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

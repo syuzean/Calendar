@@ -1,5 +1,6 @@
 @page "/register"
 @attribute [AllowAnonymous]
+@using global::Calendar.Services
 
 <PageTitle>Create account · Luma</PageTitle>
 
@@ -14,14 +15,21 @@
         @if (!string.IsNullOrWhiteSpace(Error)) { <div class="auth-error">@Error</div> }
         <form class="auth-form" method="post" action="/account/register">
             <AntiforgeryToken />
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
             <label class="field"><span>Your name</span><input name="name" autocomplete="name" minlength="2" maxlength="80" required placeholder="Alex Morgan" /></label>
             <label class="field"><span>Email address</span><input name="email" type="email" autocomplete="email" required placeholder="you@example.com" /></label>
             <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters" /></label>
             <button class="primary-button auth-submit" type="submit">Create account</button>
         </form>
-        <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+        <p class="auth-switch">Already have an account? <a href="@LoginUrl">Sign in</a></p>
     </section>
     <aside class="auth-aside"><div><span>YOUR TIME, YOUR RULES</span><h2>Private when it matters. Shared when it helps.</h2><p>Invite collaborators by email and make selected events discoverable to the community.</p></div></aside>
 </div>
 
-@code { [SupplyParameterFromQuery] public string? Error { get; set; } }
+@code {
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery] public string? InvitationToken { get; set; }
+    private string? EffectiveInvitationToken => InvitationFlow.EffectiveToken(InvitationToken, ReturnUrl);
+    private string LoginUrl => InvitationFlow.LoginUrl(ReturnUrl, EffectiveInvitationToken);
+}
