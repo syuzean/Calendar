@@ -64,6 +64,7 @@ public sealed class CalendarStore(
     {
         LastNotice = null;
         Validate(item);
+        EnsureNotPastDate(item.Start);
 
         await using var db = await dbFactory.CreateDbContextAsync();
         var entity = new CalendarEvent
@@ -96,6 +97,8 @@ public sealed class CalendarStore(
 
         EnsureOwner(entity);
         EnsureCurrentVersion(entity, item.Version);
+        if (CalendarTimeRules.IsPastDate(item.Start, DateTime.Today) && item.Start.Date != entity.Start.Date)
+            throw new ValidationException(CalendarTimeRules.PastDateMessage);
         ApplyChanges(entity, item);
         entity.Version = Guid.NewGuid();
 
@@ -114,6 +117,7 @@ public sealed class CalendarStore(
 
         EnsureOwner(entity);
         EnsureCurrentVersion(entity, version);
+        EnsureNotPastDate(targetStart);
         var duration = entity.End - entity.Start;
         entity.Start = targetStart;
         entity.End = targetStart.Add(duration);
@@ -133,6 +137,7 @@ public sealed class CalendarStore(
 
         EnsureOwner(source);
         EnsureCurrentVersion(source, version);
+        EnsureNotPastDate(targetStart);
         var copy = new CalendarEvent
         {
             Id = Guid.NewGuid(),
@@ -374,6 +379,12 @@ public sealed class CalendarStore(
         address.Address.Equals(email, StringComparison.OrdinalIgnoreCase);
     private static bool IsHalfHourBoundary(DateTime value) =>
         value.Minute % 30 == 0 && value.Ticks % TimeSpan.TicksPerMinute == 0;
+
+    private static void EnsureNotPastDate(DateTime value)
+    {
+        if (CalendarTimeRules.IsPastDate(value, DateTime.Today))
+            throw new ValidationException(CalendarTimeRules.PastDateMessage);
+    }
 
     private sealed record NewShareRecipient(string Name, string Email, string? InvitationToken);
 }

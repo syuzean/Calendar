@@ -56,9 +56,9 @@
             @if (!Store.IsReady)
             { <div class="loading-calendar"><div></div><div></div><div></div><div></div><span>Loading your calendar…</span></div> }
             else if (CurrentView == "Month")
-            { <MonthView DisplayDate="DisplayDate" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
+            { <MonthView DisplayDate="DisplayDate" Events="VisibleEvents" CurrentMoment="CurrentMoment" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
             else
-            { <TimeGridView Days="VisibleDays" Events="VisibleEvents" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
+            { <TimeGridView Days="VisibleDays" Events="VisibleEvents" CurrentMoment="CurrentMoment" AutoScrollRequest="TimeGridScrollRequest" EmptySelected="CreateEvent" DaySelected="OpenDay" EventSelected="OpenEvent" EventContextRequested="OpenContextMenu" /> }
         </section>
     </main>
 </div>
@@ -123,6 +123,9 @@
     private int DialogKey;
     private string? OperationError;
     private DotNetObjectReference<Home>? DragDropReference;
+    private System.Threading.Timer? ClockTimer;
+    private DateTime CurrentMoment = DateTime.Now;
+    private int TimeGridScrollRequest;
     private CalendarEvent? ContextEvent;
     private ElementReference ContextMenuLayer, ContextShareInput;
     private double ContextMenuX, ContextMenuY;
@@ -140,7 +143,14 @@
     };
     private string Initials => string.Concat(Store.CurrentUserName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])));
 
-    protected override void OnInitialized() => Store.Changed += OnStoreChanged;
+    protected override void OnInitialized()
+    {
+        Store.Changed += OnStoreChanged;
+        var now = DateTime.Now;
+        CurrentMoment = now;
+        var untilNextMinute = TimeSpan.FromMilliseconds(60_000 - now.Second * 1_000 - now.Millisecond);
+        ClockTimer = new System.Threading.Timer(RefreshClock, null, untilNextMinute, TimeSpan.FromMinutes(1));
+    }
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
@@ -193,15 +203,55 @@
         var days = VisibleDays;
         return days[0].Month == days[^1].Month ? $"{days[0]:MMMM d}–{days[^1]:d, yyyy}" : $"{days[0]:MMM d} – {days[^1]:MMM d, yyyy}";
     }
-    private void Previous() => DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(-1), "Week" => DisplayDate.AddDays(-7), _ => DisplayDate.AddDays(-1) };
-    private void Next() => DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(1), "Week" => DisplayDate.AddDays(7), _ => DisplayDate.AddDays(1) };
-    private void GoToday() { DisplayDate = DateTime.Today; MiniDate = new(DateTime.Today.Year, DateTime.Today.Month, 1); }
-    private void SetView(string view) => CurrentView = view;
-    private void SelectMiniDay(DateTime day) { DisplayDate = day; MiniDate = new(day.Year, day.Month, 1); }
-    private void OpenDay(DateTime day) { DisplayDate = day; CurrentView = "Day"; }
+    private void Previous()
+    {
+        DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(-1), "Week" => DisplayDate.AddDays(-7), _ => DisplayDate.AddDays(-1) };
+        RequestTodayScrollIfVisible();
+    }
+    private void Next()
+    {
+        DisplayDate = CurrentView switch { "Month" => DisplayDate.AddMonths(1), "Week" => DisplayDate.AddDays(7), _ => DisplayDate.AddDays(1) };
+        RequestTodayScrollIfVisible();
+    }
+    private void GoToday()
+    {
+        DisplayDate = CurrentMoment.Date;
+        MiniDate = new(CurrentMoment.Year, CurrentMoment.Month, 1);
+        RequestTodayScrollIfVisible();
+    }
+    private void SetView(string view)
+    {
+        CurrentView = view;
+        RequestTodayScrollIfVisible();
+    }
+    private void SelectMiniDay(DateTime day)
+    {
+        DisplayDate = day;
+        MiniDate = new(day.Year, day.Month, 1);
+        RequestTodayScrollIfVisible();
+    }
+    private void OpenDay(DateTime day)
+    {
+        DisplayDate = day;
+        CurrentView = "Day";
+        RequestTodayScrollIfVisible();
+    }
     private void CreateFromButton() => CreateEvent(DisplayDate.Date.AddHours(9));
     private void CreateEvent(DateTime start) => CreateEvent(start, start.AddHours(1));
-    private void CreateEvent(DateTime start, DateTime end) { OperationError = null; EditingEvent = new CalendarEvent { Start = start, End = end, Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName }; IsCreating = true; DialogKey++; }
+    private void CreateEvent(DateTime start, DateTime end)
+    {
+        if (CalendarTimeRules.IsPastDate(start, CurrentMoment.Date))
+        {
+            EditingEvent = null;
+            OperationError = CalendarTimeRules.PastDateMessage;
+            return;
+        }
+
+        OperationError = null;
+        EditingEvent = new CalendarEvent { Start = start, End = end, Color = "violet", CanEdit = true, OwnerId = Store.CurrentUserId, OwnerName = Store.CurrentUserName };
+        IsCreating = true;
+        DialogKey++;
+    }
     private void OpenEvent(CalendarEvent item) { OperationError = null; EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
     private void CloseDialog() { OperationError = null; EditingEvent = null; }
     private async Task SaveEvent(CalendarEvent item)
@@ -377,6 +427,13 @@
             return;
         }
 
+        if (CalendarTimeRules.IsPastDate(start, CurrentMoment.Date))
+        {
+            OperationError = CalendarTimeRules.PastDateMessage;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         CreateEvent(start, end);
         await InvokeAsync(StateHasChanged);
     }
@@ -409,6 +466,12 @@
             await InvokeAsync(StateHasChanged);
             return;
         }
+        if (CalendarTimeRules.IsPastDate(targetStart, CurrentMoment.Date))
+        {
+            OperationError = CalendarTimeRules.PastDateMessage;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
 
         try
         {
@@ -431,10 +494,23 @@
             try { await Store.ReloadAsync(); } catch { }
         }
     }
+    private void RequestTodayScrollIfVisible()
+    {
+        if (CurrentView != "Month" && VisibleDays.Contains(CurrentMoment.Date)) TimeGridScrollRequest++;
+    }
+    private void RefreshClock(object? state)
+    {
+        _ = InvokeAsync(() =>
+        {
+            CurrentMoment = DateTime.Now;
+            StateHasChanged();
+        });
+    }
     private void OnStoreChanged() => InvokeAsync(StateHasChanged);
     public void Dispose()
     {
         Store.Changed -= OnStoreChanged;
+        ClockTimer?.Dispose();
         DragDropReference?.Dispose();
     }
 }

@@ -1,17 +1,15 @@
 @using global::Calendar.Models
 @using global::Calendar.Services
-@implements IDisposable
-
-@{ var currentMoment = DateTime.Now; }
+@inject IJSRuntime JS
 
 <div class="time-view">
     <div class="time-header" style="--day-count:@Days.Count">
         <div class="time-gutter"></div>
         @foreach (var day in Days)
         {
-            <button class="time-day-header @(day == currentMoment.Date ? "today" : "")"
-                    aria-current="@(day == currentMoment.Date ? "date" : null)" @onclick="() => DaySelected.InvokeAsync(day)">
-                <span class="time-day-name">@day.ToString("ddd").ToUpperInvariant() @if (day == currentMoment.Date) { <em>Today</em> }</span>
+            <button class="time-day-header @(day == CurrentMoment.Date ? "today" : "")"
+                    aria-current="@(day == CurrentMoment.Date ? "date" : null)" @onclick="() => DaySelected.InvokeAsync(day)">
+                <span class="time-day-name">@day.ToString("ddd").ToUpperInvariant() @if (day == CurrentMoment.Date) { <em>Today</em> }</span>
                 <strong>@day.Day</strong>
             </button>
         }
@@ -22,53 +20,62 @@
             <div class="all-day-label">all-day</div>
             @foreach (var day in Days)
             {
-                <div class="all-day-cell" data-calendar-drop="day" data-drop-value="@day.ToString("yyyy-MM-dd")">
+                <div class="all-day-cell @(IsPast(day) ? "past-date" : "")"
+                     data-calendar-drop="@(IsPast(day) ? null : "day")" data-drop-value="@day.ToString("yyyy-MM-dd")">
                     @foreach (var item in AllDayEvents.Where(e => e.Start.Date <= day && e.End.Date > day))
                     {
-                        <button class="all-day-event color-@item.Color"
+                        <button class="all-day-event color-@item.Color @(CalendarTimeRules.IsLive(item, CurrentMoment) ? "live-now" : "")"
                                 title="@DragTitle(item)" draggable="@(item.CanEdit ? "true" : "false")"
                                 data-calendar-event="@item.Id"
                                 @oncontextmenu="args => RequestContextMenu(item, args)"
                                 @oncontextmenu:preventDefault="@item.CanEdit"
-                                @onclick="() => EventSelected.InvokeAsync(item)">@item.Title</button>
+                                @onclick="() => EventSelected.InvokeAsync(item)">
+                            @if (CalendarTimeRules.IsLive(item, CurrentMoment)) { <span class="live-now-badge">LIVE NOW</span> }
+                            @item.Title
+                        </button>
                     }
                 </div>
             }
         </div>
     }
-    <div class="time-scroll">
+    <div class="time-scroll" @ref="TimeScroll">
         <div class="time-grid" style="--day-count:@Days.Count">
             <div class="hour-labels">
                 @foreach (var hour in Hours) { <span style="top:@(hour * PixelsPerHour)px">@(hour == 0 ? "" : DateTime.Today.AddHours(hour).ToString("h tt"))</span> }
             </div>
             @foreach (var day in Days)
             {
-                <div class="day-column @(day == currentMoment.Date ? "today-column" : "")"
+                <div class="day-column @(day == CurrentMoment.Date ? "today-column" : "") @(IsPast(day) ? "past-date" : "")"
                      data-calendar-day="@day.ToString("yyyy-MM-ddT00:00:00")">
-                    @if (day == currentMoment.Date)
+                    @if (day == CurrentMoment.Date)
                     {
-                        <div class="current-hour-spotlight" style="top:@CurrentHourTop(currentMoment)px" aria-hidden="true"></div>
+                        <div class="current-hour-spotlight" style="top:@CurrentHourTop(CurrentMoment)px" aria-hidden="true"></div>
                     }
                     @foreach (var halfHour in HalfHours)
                     {
                         var slot = day.AddMinutes(halfHour * MinutesPerSlot);
-                        <button class="hour-slot"
-                                data-calendar-drop="time" data-drop-value="@slot.ToString("yyyy-MM-ddTHH:mm:ss")"
+                        <button class="hour-slot @(IsPast(day) ? "past-date" : "")"
+                                data-calendar-drop="@(IsPast(day) ? null : "time")" data-drop-value="@slot.ToString("yyyy-MM-ddTHH:mm:ss")"
                                 data-slot-index="@halfHour" data-time-label="@slot.ToString("h:mm tt")"
-                                aria-label="Create event at @slot.ToString("f")" @onclick="() => EmptySelected.InvokeAsync(slot)"
+                                aria-label="Create event at @slot.ToString("f")" aria-disabled="@(IsPast(day) ? "true" : null)"
+                                @onclick="() => EmptySelected.InvokeAsync(slot)"
                                 ></button>
                     }
                     @foreach (var layout in LayoutEvents(day))
                     {
                         var item = layout.Item;
                         <div class="time-event-shell" style="@EventStyle(layout)">
-                            <button class="time-event color-@item.Color @(layout.IsCompact ? "time-event-short" : "")"
+                            <button class="time-event color-@item.Color @(layout.IsCompact ? "time-event-short" : "") @(CalendarTimeRules.IsLive(item, CurrentMoment) ? "live-now" : "")"
                                     title="@EventTitle(item)" aria-label="@EventTitle(item)"
                                     draggable="@(item.CanEdit ? "true" : "false")"
                                     data-calendar-event="@item.Id"
                                     @oncontextmenu="args => RequestContextMenu(item, args)"
                                     @oncontextmenu:preventDefault="@item.CanEdit"
                                     @onclick="() => EventSelected.InvokeAsync(item)">
+                                @if (CalendarTimeRules.IsLive(item, CurrentMoment))
+                                {
+                                    <span class="live-now-badge">LIVE NOW</span>
+                                }
                                 @if (layout.IsCompact)
                                 {
                                     <span class="time-event-compact"><strong>@item.Title</strong> · @TimeRange(item, false)</span>
@@ -86,10 +93,10 @@
                             }
                         </div>
                     }
-                    @if (day == currentMoment.Date)
+                    @if (day == CurrentMoment.Date)
                     {
-                        <div class="now-line" style="top:@NowTop(currentMoment)px" aria-label="Current time @currentMoment.ToString("h:mm tt")">
-                            <span class="now-dot"></span><span class="now-label">NOW · @currentMoment.ToString("h:mm tt")</span>
+                        <div class="now-line" style="top:@NowTop(CurrentMoment)px" aria-label="Current time @CurrentMoment.ToString("h:mm tt")">
+                            <span class="now-dot"></span><span class="now-label">NOW · @CurrentMoment.ToString("h:mm tt")</span>
                         </div>
                     }
                 </div>
@@ -101,6 +108,8 @@
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<DateTime> Days { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<CalendarEvent> Events { get; set; } = [];
+    [Parameter, EditorRequired] public DateTime CurrentMoment { get; set; }
+    [Parameter] public int AutoScrollRequest { get; set; }
     [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
     [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
     [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
@@ -113,7 +122,8 @@
     private const double MinimumEventHeight = 26;
     private const double EventOuterMargin = 4;
     private const double OverlapColumnGap = 8;
-    private System.Threading.Timer? ClockTimer;
+    private ElementReference TimeScroll;
+    private int LastAutoScrollRequest = int.MinValue;
     private IEnumerable<CalendarEvent> AllDayEvents => Events.Where(e => e.IsAllDay);
     private static string DragTitle(CalendarEvent item) => item.CanEdit
         ? $"{item.Title} — drag to move; hold Ctrl while dragging to copy"
@@ -121,11 +131,13 @@
     private Task RequestContextMenu(CalendarEvent item, MouseEventArgs args) => item.CanEdit
         ? EventContextRequested.InvokeAsync(new EventContextRequest(item, args.ClientX, args.ClientY))
         : Task.CompletedTask;
-    protected override void OnInitialized()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        var now = DateTime.Now;
-        var untilNextMinute = TimeSpan.FromSeconds(60 - now.Second);
-        ClockTimer = new System.Threading.Timer(_ => _ = InvokeAsync(StateHasChanged), null, untilNextMinute, TimeSpan.FromMinutes(1));
+        if (!Days.Contains(CurrentMoment.Date) || (!firstRender && LastAutoScrollRequest == AutoScrollRequest)) return;
+
+        LastAutoScrollRequest = AutoScrollRequest;
+        var targetTop = Math.Max(0, NowTop(CurrentMoment) - PixelsPerHour * .75);
+        await JS.InvokeVoidAsync("lumaCalendarDrag.scrollToTime", TimeScroll, targetTop);
     }
 
     private static double NowTop(DateTime now) => (now.Hour + now.Minute / 60d) * PixelsPerHour;
@@ -219,7 +231,7 @@
         ? $"{item.Start:h:mm tt} – {item.End:h:mm tt}"
         : $"{item.Start:h:mm tt}–{item.End:h:mm tt}";
 
-    public void Dispose() => ClockTimer?.Dispose();
+    private bool IsPast(DateTime day) => CalendarTimeRules.IsPastDate(day, CurrentMoment.Date);
 
     private sealed record EventCandidate(
         CalendarEvent Item,

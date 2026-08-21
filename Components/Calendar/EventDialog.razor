@@ -21,7 +21,7 @@
             </label>
             <div class="field-grid">
                 <label class="field">
-                    <span>Date</span><input type="date" value="@DateText" @onchange="UpdateDate" />
+                    <span>Date</span><input type="date" min="@MinimumDate" value="@DateText" @onchange="UpdateDate" />
                 </label>
                 <label class="all-day-toggle"><input type="checkbox" @bind="IsAllDay" /><span></span> All day</label>
             </div>
@@ -119,6 +119,8 @@
         if (!Event.CanEdit) return;
         if (string.IsNullOrWhiteSpace(Title)) { Error = "Give your event a title."; return; }
         if (!DateTime.TryParse(DateText, out var date)) { Error = "Choose a valid date."; return; }
+        if (CalendarTimeRules.IsPastDate(date, DateTime.Today) && (IsNew || date.Date != Event.Start.Date))
+        { Error = CalendarTimeRules.PastDateMessage; return; }
         var start = date.Date;
         var end = date.Date.AddDays(1);
         if (!IsAllDay)
@@ -149,6 +151,9 @@
     private void UpdateDate(ChangeEventArgs args) => DateText = args.Value?.ToString() ?? string.Empty;
     private void UpdateStartTime(ChangeEventArgs args) => StartTimeText = args.Value?.ToString() ?? string.Empty;
     private void UpdateEndTime(ChangeEventArgs args) => EndTimeText = args.Value?.ToString() ?? string.Empty;
+    private string? MinimumDate => !IsNew && Event.Start.Date < DateTime.Today
+        ? null
+        : DateTime.Today.ToString("yyyy-MM-dd");
     private static bool IsHalfHourBoundary(DateTime value) =>
         value.Minute % 30 == 0 && value.Ticks % TimeSpan.TicksPerMinute == 0;
 }

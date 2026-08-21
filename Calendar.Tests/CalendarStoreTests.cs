@@ -93,6 +93,36 @@ public sealed class CalendarStoreTests
     }
 
     [Fact]
+    public async Task CreateEvent_OnPastCalendarDate_IsRejected()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.Start = DateTime.Today.AddDays(-1).AddHours(9);
+        item.End = item.Start.AddHours(1);
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(item));
+
+        Assert.Equal(CalendarTimeRules.PastDateMessage, exception.Message);
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.Events.ToListAsync());
+    }
+
+    [Fact]
+    public async Task CreateEvent_EarlierOnToday_IsAllowed()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.Start = DateTime.Today;
+        item.End = DateTime.Today.AddHours(1);
+
+        await store.CreateAsync(item);
+
+        Assert.Equal(DateTime.Today, store.Events.Single().Start);
+    }
+
+    [Fact]
     public async Task CreateEvent_WithValidMeetingUrl_PersistsIt()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -302,6 +332,51 @@ public sealed class CalendarStoreTests
 
         await Assert.ThrowsAsync<EventConcurrencyException>(() =>
             store.MoveAsync(stale.Id, stale.Version, stale.Start.AddDays(2)));
+    }
+
+    [Fact]
+    public async Task MoveAndCopy_ToPastCalendarDate_AreRejectedWithoutChangingOriginal()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        await store.CreateAsync(NewEvent());
+        var original = store.Events.Single().Copy();
+        var pastTarget = DateTime.Today.AddDays(-1).AddHours(9);
+
+        var moveException = await Assert.ThrowsAsync<ValidationException>(() =>
+            store.MoveAsync(original.Id, original.Version, pastTarget));
+        var copyException = await Assert.ThrowsAsync<ValidationException>(() =>
+            store.CopyAsync(original.Id, original.Version, pastTarget));
+
+        Assert.Equal(CalendarTimeRules.PastDateMessage, moveException.Message);
+        Assert.Equal(CalendarTimeRules.PastDateMessage, copyException.Message);
+        var remaining = Assert.Single(store.Events);
+        Assert.Equal(original.Id, remaining.Id);
+        Assert.Equal(original.Start, remaining.Start);
+    }
+
+    [Fact]
+    public async Task HistoricalEvent_CanBeEditedWithoutChangingItsCalendarDate()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var historical = NewEvent(fixture.Owner.Id);
+        historical.Id = Guid.NewGuid();
+        historical.Start = DateTime.Today.AddDays(-2).AddHours(9);
+        historical.End = historical.Start.AddHours(1);
+        historical.Version = Guid.NewGuid();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Events.Add(historical);
+            await db.SaveChangesAsync();
+        }
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var edit = store.Events.Single().Copy();
+        edit.Title = "Historical event notes updated";
+
+        await store.UpdateAsync(edit);
+
+        Assert.Equal("Historical event notes updated", store.Events.Single().Title);
+        Assert.Equal(historical.Start, store.Events.Single().Start);
     }
 
     [Fact]

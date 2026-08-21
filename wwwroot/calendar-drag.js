@@ -192,6 +192,10 @@
     window.lumaCalendarDrag = {
         initialize(reference) {
             dotNetReference = reference;
+        },
+        scrollToTime(element, top) {
+            if (!(element instanceof HTMLElement)) return;
+            element.scrollTo({ top: Math.max(0, Number(top) || 0), behavior: "auto" });
         }
     };
 })();

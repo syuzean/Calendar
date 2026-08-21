@@ -11,20 +11,21 @@
             var dayEvents = Events.Where(item => item.Start.Date <= date &&
                 (item.IsAllDay ? item.End.Date > date : item.End.Date >= date))
                 .OrderByDescending(item => item.IsAllDay).ThenBy(item => item.Start).ToList();
-            <div class="month-day @(date.Month != DisplayDate.Month ? "outside" : "") @(date == DateTime.Today ? "today" : "")"
-                 data-calendar-drop="day" data-drop-value="@date.ToString("yyyy-MM-dd")"
+            <div class="month-day @(date.Month != DisplayDate.Month ? "outside" : "") @(date == CurrentMoment.Date ? "today" : "") @(IsPast(date) ? "past-date" : "")"
+                 data-calendar-drop="@(IsPast(date) ? null : "day")" data-drop-value="@date.ToString("yyyy-MM-dd")"
                  @onclick="() => EmptySelected.InvokeAsync(date.AddHours(9))">
                 <div class="day-number"><span>@date.Day</span></div>
                 <div class="day-events">
                     @foreach (var item in dayEvents.Take(3))
                     {
                         <div class="month-event-shell">
-                            <button class="month-event color-@item.Color"
+                            <button class="month-event color-@item.Color @(CalendarTimeRules.IsLive(item, CurrentMoment) ? "live-now" : "")"
                                     title="@DragTitle(item)" draggable="@(item.CanEdit ? "true" : "false")"
                                     data-calendar-event="@item.Id"
                                     @oncontextmenu="args => RequestContextMenu(item, args)"
                                     @oncontextmenu:preventDefault="@item.CanEdit"
                                     @onclick:stopPropagation="true" @onclick="() => EventSelected.InvokeAsync(item)">
+                                @if (CalendarTimeRules.IsLive(item, CurrentMoment)) { <span class="month-live-now-badge">LIVE NOW</span> }
                                 @if (!item.IsAllDay) { <span class="event-time">@item.Start.ToString("h:mm")</span> }
                                 <span>@item.Title</span>
                             </button>
@@ -49,6 +50,7 @@
 @code {
     [Parameter, EditorRequired] public DateTime DisplayDate { get; set; }
     [Parameter, EditorRequired] public IReadOnlyList<CalendarEvent> Events { get; set; } = [];
+    [Parameter, EditorRequired] public DateTime CurrentMoment { get; set; }
     [Parameter] public EventCallback<DateTime> EmptySelected { get; set; }
     [Parameter] public EventCallback<DateTime> DaySelected { get; set; }
     [Parameter] public EventCallback<CalendarEvent> EventSelected { get; set; }
@@ -60,6 +62,7 @@
     private Task RequestContextMenu(CalendarEvent item, MouseEventArgs args) => item.CanEdit
         ? EventContextRequested.InvokeAsync(new EventContextRequest(item, args.ClientX, args.ClientY))
         : Task.CompletedTask;
+    private bool IsPast(DateTime day) => CalendarTimeRules.IsPastDate(day, CurrentMoment.Date);
     private IEnumerable<DateTime> Days
     {
         get
