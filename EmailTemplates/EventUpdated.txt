@@ -1,0 +1,25 @@
+LUMA CALENDAR
+
+Hi {{RecipientName}},
+
+The event has been updated by {{OrganizerName}}.
+
+{{EventTitle}}
+Date: {{EventDate}}
+Time: {{StartTime}}{{#EndTime}} – {{EndTime}}{{/EndTime}}
+Organizer: {{OrganizerName}}
+{{#ChangedFields}}
+Changed: {{ChangedFields}}
+{{/ChangedFields}}
+{{#Description}}
+Description:
+{{Description}}
+{{/Description}}
+{{#MeetingUrl}}
+{{MeetingProvider}}: {{MeetingUrl}}
+Join meeting: {{MeetingUrl}}
+{{/MeetingUrl}}
+
+Open in LUMA: {{EventUrl}}
+
+This update was sent to {{RecipientEmail}} because this event is shared with you.

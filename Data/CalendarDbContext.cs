@@ -60,6 +60,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.Property(invitation => invitation.ClaimedByUserId).HasColumnName("InvitedUserId");
             entity.Property(invitation => invitation.ClaimedUtc).HasColumnName("RespondedUtc");
             entity.Property(invitation => invitation.TokenHash).HasMaxLength(64);
+            entity.Property(invitation => invitation.ResponseComment).HasMaxLength(1000);
             entity.Property(invitation => invitation.RowVersion).IsRowVersion();
             entity.Property(invitation => invitation.EmailLastError).HasMaxLength(1000);
             entity.HasOne(invitation => invitation.Event)

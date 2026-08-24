@@ -14,10 +14,12 @@ public sealed class EventInvitation
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresUtc { get; set; }
     public DateTime? ClaimedUtc { get; set; }
+    public string ResponseComment { get; set; } = string.Empty;
+    public DateTime? ResponseUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public int EmailStatus { get; set; }
     public DateTime? EmailSentUtc { get; set; }
     public string? EmailLastError { get; set; }
 }
 
-public enum EventInvitationStatus { Pending = 0, Accepted = 1, Revoked = 4 }
+public enum EventInvitationStatus { Pending = 0, Accepted = 1, Declined = 2, Revoked = 4 }

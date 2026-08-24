@@ -1,0 +1,12 @@
+LUMA CALENDAR
+
+Hi {{RecipientName}},
+
+The event has been cancelled and is no longer taking place.
+
+{{EventTitle}}
+Original date: {{EventDate}}
+Original time: {{StartTime}}{{#EndTime}} – {{EndTime}}{{/EndTime}}
+Organizer: {{OrganizerName}}
+
+This cancellation was sent to {{RecipientEmail}} because this event was shared with you.

@@ -68,6 +68,57 @@ public sealed class EmailTemplateRendererTests
         Assert.DoesNotContain("Join meeting:", result.PlainTextBody);
     }
 
+    [Fact]
+    public void EventUpdated_RendersConsistentHtmlPlainTextAndChangedFields()
+    {
+        var result = Renderer().RenderEventUpdated(new EventUpdatedTemplateData(
+            "Recipient",
+            "recipient@luma.test",
+            "Owner",
+            "Updated planning session",
+            new DateTime(2026, 10, 21, 15, 0, 0),
+            new DateTime(2026, 10, 21, 16, 0, 0),
+            false,
+            "Review the revised roadmap.",
+            "#7654ee",
+            "https://luma.test/?event=123",
+            "https://zoom.us/j/123456789",
+            "Zoom",
+            "Title, Date, Time"));
+
+        Assert.Contains("Updated:", result.Subject);
+        Assert.Contains("The event has been updated", result.HtmlBody);
+        Assert.Contains("Updated planning session", result.HtmlBody);
+        Assert.Contains("Title, Date, Time", result.HtmlBody);
+        Assert.Contains("Open in LUMA", result.HtmlBody);
+        Assert.Contains("Join meeting", result.HtmlBody);
+        Assert.Contains("Changed: Title, Date, Time", result.PlainTextBody);
+        Assert.DoesNotContain("{{", result.HtmlBody);
+    }
+
+    [Fact]
+    public void EventCancelled_RendersRecognitionDetailsWithoutActiveLinks()
+    {
+        var result = Renderer().RenderEventCancelled(new EventCancelledTemplateData(
+            "Recipient",
+            "recipient@luma.test",
+            "Owner",
+            "Planning session",
+            new DateTime(2026, 10, 20, 9, 0, 0),
+            new DateTime(2026, 10, 20, 10, 0, 0),
+            false,
+            "#7654ee"));
+
+        Assert.Contains("Cancelled:", result.Subject);
+        Assert.Contains("no longer taking place", result.HtmlBody);
+        Assert.Contains("Planning session", result.HtmlBody);
+        Assert.Contains("Tuesday, October 20, 2026", result.HtmlBody);
+        Assert.Contains("9:00 AM", result.PlainTextBody);
+        Assert.DoesNotContain("Join meeting", result.HtmlBody);
+        Assert.DoesNotContain("Open in LUMA", result.HtmlBody);
+        Assert.DoesNotContain("href=", result.HtmlBody, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static FileEmailTemplateRenderer Renderer() =>
         new(Path.Combine(AppContext.BaseDirectory, "EmailTemplates"));
 

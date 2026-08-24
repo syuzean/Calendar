@@ -47,10 +47,6 @@
             {
                 <div class="day-column @(day == CurrentMoment.Date ? "today-column" : "") @(IsPast(day) ? "past-date" : "")"
                      data-calendar-day="@day.ToString("yyyy-MM-ddT00:00:00")">
-                    @if (day == CurrentMoment.Date)
-                    {
-                        <div class="current-hour-spotlight" style="top:@CurrentHourTop(CurrentMoment)px" aria-hidden="true"></div>
-                    }
                     @foreach (var halfHour in HalfHours)
                     {
                         var slot = day.AddMinutes(halfHour * MinutesPerSlot);
@@ -141,7 +137,6 @@
     }
 
     private static double NowTop(DateTime now) => (now.Hour + now.Minute / 60d) * PixelsPerHour;
-    private static double CurrentHourTop(DateTime now) => now.Hour * PixelsPerHour;
     private IReadOnlyList<EventLayout> LayoutEvents(DateTime day)
     {
         var candidates = Events

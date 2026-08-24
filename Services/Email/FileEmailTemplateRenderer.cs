@@ -8,36 +8,75 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
 {
     public RenderedEmailTemplate RenderEventShared(EventSharedTemplateData data)
     {
-        var values = Values(data);
-        var subject = Render(Read("EventShared.subject.txt"), values, htmlEncode: false)
+        var values = EventValues(
+            data.RecipientName, data.RecipientEmail, data.OrganizerName, data.EventTitle,
+            data.Start, data.End, data.IsAllDay, data.Description, data.EventColor,
+            data.EventUrl, data.MeetingUrl, data.MeetingProvider);
+        return RenderTemplate("EventShared", values);
+    }
+
+    public RenderedEmailTemplate RenderEventUpdated(EventUpdatedTemplateData data)
+    {
+        var values = EventValues(
+            data.RecipientName, data.RecipientEmail, data.OrganizerName, data.EventTitle,
+            data.Start, data.End, data.IsAllDay, data.Description, data.EventColor,
+            data.EventUrl, data.MeetingUrl, data.MeetingProvider);
+        values["ChangedFields"] = data.ChangedFields;
+        return RenderTemplate("EventUpdated", values);
+    }
+
+    public RenderedEmailTemplate RenderEventCancelled(EventCancelledTemplateData data)
+    {
+        var values = EventValues(
+            data.RecipientName, data.RecipientEmail, data.OrganizerName, data.EventTitle,
+            data.Start, data.End, data.IsAllDay, string.Empty, data.EventColor,
+            string.Empty, string.Empty, string.Empty);
+        return RenderTemplate("EventCancelled", values);
+    }
+
+    private RenderedEmailTemplate RenderTemplate(string templateName, IReadOnlyDictionary<string, string> values)
+    {
+        var subject = Render(Read($"{templateName}.subject.txt"), values, htmlEncode: false)
             .Replace('\r', ' ').Replace('\n', ' ').Trim();
-        var html = Render(Read("EventShared.html"), values, htmlEncode: true).Trim();
-        var text = Render(Read("EventShared.txt"), values, htmlEncode: false).Trim();
+        var html = Render(Read($"{templateName}.html"), values, htmlEncode: true).Trim();
+        var text = Render(Read($"{templateName}.txt"), values, htmlEncode: false).Trim();
         return new RenderedEmailTemplate(subject, html, text);
     }
 
     private string Read(string fileName) => File.ReadAllText(Path.Combine(templateDirectory, fileName));
 
-    private static Dictionary<string, string> Values(EventSharedTemplateData data)
+    private static Dictionary<string, string> EventValues(
+        string recipientName,
+        string recipientEmail,
+        string organizerName,
+        string eventTitle,
+        DateTime start,
+        DateTime end,
+        bool isAllDay,
+        string description,
+        string eventColor,
+        string eventUrl,
+        string meetingUrl,
+        string meetingProvider)
     {
-        var finalDate = data.IsAllDay ? data.End.AddDays(-1) : data.End;
-        var eventDate = data.Start.Date == finalDate.Date
-            ? data.Start.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture)
-            : $"{data.Start:MMMM d, yyyy} – {finalDate:MMMM d, yyyy}";
+        var finalDate = isAllDay ? end.AddDays(-1) : end;
+        var eventDate = start.Date == finalDate.Date
+            ? start.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture)
+            : $"{start:MMMM d, yyyy} – {finalDate:MMMM d, yyyy}";
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["RecipientName"] = string.IsNullOrWhiteSpace(data.RecipientName) ? data.RecipientEmail : data.RecipientName,
-            ["RecipientEmail"] = data.RecipientEmail,
-            ["OrganizerName"] = data.OrganizerName,
-            ["EventTitle"] = data.EventTitle,
+            ["RecipientName"] = string.IsNullOrWhiteSpace(recipientName) ? recipientEmail : recipientName,
+            ["RecipientEmail"] = recipientEmail,
+            ["OrganizerName"] = organizerName,
+            ["EventTitle"] = eventTitle,
             ["EventDate"] = eventDate,
-            ["StartTime"] = data.IsAllDay ? "All day" : data.Start.ToString("h:mm tt", CultureInfo.InvariantCulture),
-            ["EndTime"] = data.IsAllDay ? "" : data.End.ToString("h:mm tt", CultureInfo.InvariantCulture),
-            ["Description"] = data.Description ?? string.Empty,
-            ["EventColor"] = data.EventColor,
-            ["EventUrl"] = data.EventUrl,
-            ["MeetingUrl"] = data.MeetingUrl,
-            ["MeetingProvider"] = data.MeetingProvider
+            ["StartTime"] = isAllDay ? "All day" : start.ToString("h:mm tt", CultureInfo.InvariantCulture),
+            ["EndTime"] = isAllDay ? "" : end.ToString("h:mm tt", CultureInfo.InvariantCulture),
+            ["Description"] = description ?? string.Empty,
+            ["EventColor"] = eventColor,
+            ["EventUrl"] = eventUrl,
+            ["MeetingUrl"] = meetingUrl,
+            ["MeetingProvider"] = meetingProvider
         };
     }
 

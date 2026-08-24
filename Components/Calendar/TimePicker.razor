@@ -1,0 +1,88 @@
+@using global::Calendar.Services
+
+<div class="field time-picker-field @(IsOpen ? "open" : "")"
+     @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+    <span>@Label</span>
+    <button class="time-picker-trigger" type="button" aria-haspopup="listbox"
+            aria-expanded="@IsOpen" aria-controls="@PickerId" @onclick="ToggleRequested">
+        <strong>@SelectedLabel</strong>
+        <span class="time-picker-clock" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"></circle><path d="M10 6v4l2.7 1.7"></path></svg>
+        </span>
+    </button>
+
+    @if (IsOpen)
+    {
+        <div class="time-picker-popover" id="@PickerId">
+            <header>
+                <div><span>Choose time</span><strong>@Label</strong></div>
+                @if (ShowNow)
+                {
+                    <button type="button" class="time-picker-now" @onclick="NowRequested">
+                        <i></i> Now
+                    </button>
+                }
+            </header>
+            <div class="time-picker-list" role="listbox" aria-label="Choose @Label.ToLowerInvariant() time">
+                @foreach (var option in Options)
+                {
+                    var separatorIndex = option.Label.IndexOf(" · ", StringComparison.Ordinal);
+                    var timeLabel = separatorIndex < 0 ? option.Label : option.Label[..separatorIndex];
+                    var dayLabel = separatorIndex < 0 ? null : option.Label[(separatorIndex + 3)..];
+                    if (option.Value == Value)
+                    {
+                        <button @ref="SelectedOptionElement" type="button" class="selected" role="option"
+                                aria-selected="true" @onclick="() => Select(option.Value)">
+                            <span>@timeLabel</span>
+                            @if (dayLabel is not null) { <small>· @dayLabel</small> }
+                            <i aria-hidden="true">✓</i>
+                        </button>
+                    }
+                    else
+                    {
+                        <button type="button" role="option" aria-selected="false" @onclick="() => Select(option.Value)">
+                            <span>@timeLabel</span>
+                            @if (dayLabel is not null) { <small>· @dayLabel</small> }
+                        </button>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string PickerId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Value { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public IReadOnlyList<TimePickerOption> Options { get; set; } = [];
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public bool ShowNow { get; set; }
+    [Parameter] public EventCallback ToggleRequested { get; set; }
+    [Parameter] public EventCallback CloseRequested { get; set; }
+    [Parameter] public EventCallback NowRequested { get; set; }
+    [Parameter] public EventCallback<string> ValueSelected { get; set; }
+
+    private ElementReference SelectedOptionElement;
+    private bool WasOpen, FocusSelectedOption;
+    private string SelectedLabel => Options.FirstOrDefault(option => option.Value == Value)?.Label ?? "Choose time";
+
+    protected override void OnParametersSet()
+    {
+        FocusSelectedOption = IsOpen && !WasOpen;
+        WasOpen = IsOpen;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!FocusSelectedOption) return;
+        FocusSelectedOption = false;
+        await SelectedOptionElement.FocusAsync();
+    }
+
+    private Task Select(string value) => ValueSelected.InvokeAsync(value);
+
+    private Task HandleKeyDown(KeyboardEventArgs args) => args.Key == "Escape"
+        ? CloseRequested.InvokeAsync()
+        : Task.CompletedTask;
+}

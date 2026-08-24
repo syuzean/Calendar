@@ -1,5 +1,7 @@
 @page "/guest-event"
 @attribute [AllowAnonymous]
+@rendermode InteractiveServer
+@using global::Calendar.Models
 @using global::Calendar.Services
 @inject IEventInvitationService InvitationService
 
@@ -33,6 +35,29 @@
                         ↗ @MeetingUrlHelper.JoinLabel(sharedEvent.MeetingUrl)
                     </a>
                 }
+                <section class="rsvp-panel guest-rsvp-panel" aria-labelledby="guest-rsvp-heading">
+                    <div class="rsvp-heading">
+                        <div>
+                            <span class="eyebrow">YOUR RESPONSE</span>
+                            <h2 id="guest-rsvp-heading">Will you attend?</h2>
+                        </div>
+                        <span class="rsvp-status @StatusClass(sharedEvent.ResponseStatus)">@StatusLabel(sharedEvent.ResponseStatus)</span>
+                    </div>
+                    <label class="field">
+                        <span>Add a comment <em>optional</em></span>
+                        <textarea rows="2" maxlength="1000" placeholder="I'll join 10 minutes later." @bind="ResponseComment"></textarea>
+                    </label>
+                    @if (!string.IsNullOrWhiteSpace(ResponseFeedback))
+                    {
+                        <p class="rsvp-feedback @(ResponseFailed ? "error" : "success")" role="status">@ResponseFeedback</p>
+                    }
+                    <div class="rsvp-actions">
+                        <button type="button" class="rsvp-decline @(sharedEvent.ResponseStatus == EventInvitationStatus.Declined ? "active" : "")"
+                                disabled="@IsSubmitting" @onclick="() => Respond(EventInvitationStatus.Declined)">Decline</button>
+                        <button type="button" class="rsvp-accept @(sharedEvent.ResponseStatus == EventInvitationStatus.Accepted ? "active" : "")"
+                                disabled="@IsSubmitting" @onclick="() => Respond(EventInvitationStatus.Accepted)">Accept</button>
+                    </div>
+                </section>
             </div>
         }
         else
@@ -50,12 +75,54 @@
 @code {
     [SupplyParameterFromQuery] public string? Token { get; set; }
     private GuestEventResult? Result;
+    private string ResponseComment = string.Empty, ResponseFeedback = string.Empty;
+    private bool ResponseFailed, IsSubmitting;
     private string ErrorMessage => Result?.Status == InvitationStatus.Expired
         ? "This invitation has expired. Ask the organizer to share the event again."
         : "This invitation is invalid or is no longer available.";
 
-    protected override async Task OnParametersSetAsync() =>
+    protected override async Task OnParametersSetAsync()
+    {
         Result = await InvitationService.GetGuestEventAsync(Token ?? string.Empty);
+        ResponseComment = Result.Event?.ResponseComment ?? string.Empty;
+    }
+
+    private async Task Respond(EventInvitationStatus status)
+    {
+        IsSubmitting = true;
+        ResponseFeedback = string.Empty;
+        var response = await InvitationService.RespondAsGuestAsync(Token ?? string.Empty, status, ResponseComment);
+        ResponseFailed = response.Status != InvitationResponseResultStatus.Success;
+        if (!ResponseFailed)
+        {
+            Result = await InvitationService.GetGuestEventAsync(Token ?? string.Empty);
+            ResponseComment = Result.Event?.ResponseComment ?? string.Empty;
+            ResponseFeedback = status == EventInvitationStatus.Accepted
+                ? "Your response is saved. We'll let the organizer know you're attending."
+                : "Your response is saved. The organizer will see that you declined.";
+        }
+        else
+        {
+            ResponseFeedback = ResponseError(response.Status);
+        }
+        IsSubmitting = false;
+    }
+
+    private static string ResponseError(InvitationResponseResultStatus status) => status switch
+    {
+        InvitationResponseResultStatus.Expired => "This invitation has expired. Ask the organizer to share the event again.",
+        InvitationResponseResultStatus.Conflict => "Your response changed in another session. Reload the invitation and try again.",
+        InvitationResponseResultStatus.InvalidComment => "Comments cannot exceed 1,000 characters.",
+        _ => "This invitation is no longer available."
+    };
+
+    private static string StatusClass(EventInvitationStatus status) => status.ToString().ToLowerInvariant();
+    private static string StatusLabel(EventInvitationStatus status) => status switch
+    {
+        EventInvitationStatus.Accepted => "Accepted",
+        EventInvitationStatus.Declined => "Declined",
+        _ => "Pending"
+    };
 
     private static string EventDate(GuestEventView item)
     {

@@ -31,6 +31,48 @@ public sealed class EventShareNotifier(
             cancellationToken);
     }
 
+    public Task NotifyUpdatedAsync(EventUpdatedNotification notification, CancellationToken cancellationToken = default)
+    {
+        var rendered = templateRenderer.RenderEventUpdated(new EventUpdatedTemplateData(
+            notification.RecipientName,
+            notification.RecipientEmail,
+            notification.OrganizerName,
+            notification.EventTitle,
+            notification.Start,
+            notification.End,
+            notification.IsAllDay,
+            notification.Description,
+            EventColor(notification.EventColor),
+            notification.EventUrl,
+            notification.MeetingUrl,
+            MeetingUrlHelper.ProviderName(notification.MeetingUrl),
+            string.Join(", ", notification.ChangedFields)));
+
+        return SendAsync(notification.RecipientEmail, rendered, cancellationToken);
+    }
+
+    public Task NotifyCancelledAsync(EventCancelledNotification notification, CancellationToken cancellationToken = default)
+    {
+        var rendered = templateRenderer.RenderEventCancelled(new EventCancelledTemplateData(
+            notification.RecipientName,
+            notification.RecipientEmail,
+            notification.OrganizerName,
+            notification.EventTitle,
+            notification.Start,
+            notification.End,
+            notification.IsAllDay,
+            EventColor(notification.EventColor)));
+
+        return SendAsync(notification.RecipientEmail, rendered, cancellationToken);
+    }
+
+    private Task SendAsync(
+        string recipientEmail,
+        RenderedEmailTemplate rendered,
+        CancellationToken cancellationToken) => emailSender.SendAsync(
+        new EmailMessage(recipientEmail, rendered.Subject, rendered.PlainTextBody, rendered.HtmlBody),
+        cancellationToken);
+
     private static string EventColor(string color) => color.ToLowerInvariant() switch
     {
         "blue" => "#3d8fea",

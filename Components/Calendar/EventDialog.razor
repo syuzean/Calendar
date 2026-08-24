@@ -11,7 +11,7 @@
             </div>
             <button class="icon-button" aria-label="Close" type="button" @onclick="Close">×</button>
         </header>
-        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true" @onclick="ClosePickers">
             <fieldset class="form-fields" disabled="@(!Event.CanEdit)">
             @if (!string.IsNullOrWhiteSpace(ErrorMessage)) { <div class="auth-error">@ErrorMessage</div> }
             <label class="field title-field">
@@ -19,17 +19,77 @@
                 <input autofocus placeholder="What are you planning?" @bind="Title" />
                 @if (!string.IsNullOrEmpty(Error)) { <small class="field-error">@Error</small> }
             </label>
-            <div class="field-grid">
-                <label class="field">
-                    <span>Date</span><input type="date" min="@MinimumDate" value="@DateText" @onchange="UpdateDate" />
-                </label>
-                <label class="all-day-toggle"><input type="checkbox" @bind="IsAllDay" /><span></span> All day</label>
+            <div class="field-grid date-field-grid">
+                <div class="field date-picker-field" @onclick:stopPropagation="true">
+                    <span>Date</span>
+                    <button class="date-picker-trigger" type="button" aria-haspopup="dialog"
+                            aria-expanded="@ShowDatePicker" aria-controls="event-date-picker" @onclick="ToggleDatePicker">
+                        <span class="date-picker-trigger-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="15" rx="3"></rect><path d="M7 3.5v4M17 3.5v4M3.5 9.5h17"></path></svg>
+                        </span>
+                        <strong>@SelectedDate.ToString("ddd, MMM d, yyyy")</strong>
+                        <span class="date-picker-trigger-chevron" aria-hidden="true">
+                            <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg>
+                        </span>
+                    </button>
+                    @if (ShowDatePicker)
+                    {
+                        <div id="event-date-picker" class="date-picker-popover" role="dialog" aria-label="Choose event date"
+                             @onkeydown="HandleDatePickerKeyDown">
+                            <header>
+                                <div class="date-picker-heading">
+                                    <span>Choose date</span>
+                                    <strong>@CalendarMonth.ToString("MMMM yyyy")</strong>
+                                </div>
+                                <div class="date-picker-navigation">
+                                    <button type="button" aria-label="Previous month" disabled="@(!CanNavigatePrevious)" @onclick="PreviousCalendarMonth">
+                                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5"></path></svg>
+                                    </button>
+                                    <button type="button" aria-label="Next month" @onclick="NextCalendarMonth">
+                                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg>
+                                    </button>
+                                </div>
+                            </header>
+                            <div class="date-picker-weekdays" aria-hidden="true">
+                                @foreach (var weekday in Weekdays) { <span>@weekday</span> }
+                            </div>
+                            <div class="date-picker-days">
+                                @foreach (var day in CalendarDays)
+                                {
+                                    var unavailable = IsDateUnavailable(day);
+                                    <button type="button"
+                                            class="@(day.Month != CalendarMonth.Month ? "outside" : "") @(day.Date == DateTime.Today ? "today" : "") @(day.Date == SelectedDate.Date ? "selected" : "")"
+                                            disabled="@unavailable" aria-disabled="@unavailable"
+                                            aria-current="@(day.Date == DateTime.Today ? "date" : null)"
+                                            aria-selected="@(day.Date == SelectedDate.Date)"
+                                            aria-label="@DateLabel(day, unavailable)" @onclick="() => SelectDate(day)">
+                                        <span class="date-picker-day-number">@day.Day</span>
+                                        @if (day.Date == DateTime.Today) { <i class="date-picker-today-marker" aria-hidden="true"></i> }
+                                    </button>
+                                }
+                            </div>
+                            <footer>
+                                <span class="date-picker-availability"><i></i> Past dates unavailable</span>
+                                <button type="button" @onclick="SelectToday">
+                                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle><circle cx="8" cy="8" r="1.5"></circle></svg>
+                                    Go to Today
+                                </button>
+                            </footer>
+                        </div>
+                    }
+                </div>
+                <label class="all-day-toggle date-all-day"><input type="checkbox" @bind="IsAllDay" /><span></span><strong>All day</strong></label>
             </div>
             @if (!IsAllDay)
             {
                 <div class="field-grid time-fields">
-                    <label class="field"><span>Starts</span><input type="time" step="1800" value="@StartTimeText" @onchange="UpdateStartTime" /></label>
-                    <label class="field"><span>Ends</span><input type="time" step="1800" value="@EndTimeText" @onchange="UpdateEndTime" /></label>
+                    <TimePicker PickerId="event-start-time-picker" Label="Starts" Value="@StartTimeText"
+                                Options="EventTimePicker.StartOptions" IsOpen="@(OpenTimePicker == "start")"
+                                ShowNow="@(SelectedDate.Date == DateTime.Today)" ToggleRequested="ToggleStartTimePicker"
+                                CloseRequested="CloseTimePicker" NowRequested="SelectCurrentTime" ValueSelected="SelectStartTime" />
+                    <TimePicker PickerId="event-end-time-picker" Label="Ends" Value="@EndTimeSelection"
+                                Options="EndTimeOptions" IsOpen="@(OpenTimePicker == "end")"
+                                ToggleRequested="ToggleEndTimePicker" CloseRequested="CloseTimePicker" ValueSelected="SelectEndTime" />
                 </div>
             }
             <label class="field meeting-link-field">
@@ -66,6 +126,54 @@
                 }
             </fieldset>
             </fieldset>
+            @if (!IsNew && Event.CanEdit && Event.InvitationResponses.Count > 0)
+            {
+                <section class="rsvp-panel organizer-rsvp-panel" aria-labelledby="organizer-rsvp-heading">
+                    <div class="rsvp-heading">
+                        <div><span class="eyebrow">ATTENDANCE</span><h3 id="organizer-rsvp-heading">Invitation responses</h3></div>
+                    </div>
+                    <div class="rsvp-summary" aria-label="RSVP summary">
+                        <span class="accepted">✓ @RsvpSummary.Accepted Accepted</span>
+                        <span class="declined">× @RsvpSummary.Declined Declined</span>
+                        <span class="pending">○ @RsvpSummary.Pending Pending</span>
+                    </div>
+                    <div class="rsvp-roster">
+                        @foreach (var response in Event.InvitationResponses)
+                        {
+                            <article>
+                                <div>
+                                    <span class="rsvp-avatar">@RecipientInitial(response)</span>
+                                    <p><strong>@response.RecipientName</strong><small>@response.RecipientEmail</small></p>
+                                    <span class="rsvp-status @StatusClass(response.Status)">@StatusLabel(response.Status)</span>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(response.Comment))
+                                {
+                                    <blockquote>“@response.Comment”</blockquote>
+                                }
+                            </article>
+                        }
+                    </div>
+                </section>
+            }
+            else if (!IsNew && CurrentUserResponse is { } currentResponse)
+            {
+                <section class="rsvp-panel attendee-rsvp-panel" aria-labelledby="attendee-rsvp-heading">
+                    <div class="rsvp-heading">
+                        <div><span class="eyebrow">YOUR RESPONSE</span><h3 id="attendee-rsvp-heading">Will you attend?</h3></div>
+                        <span class="rsvp-status @StatusClass(currentResponse.Status)">@StatusLabel(currentResponse.Status)</span>
+                    </div>
+                    <label class="field">
+                        <span>Add a comment <em>optional</em></span>
+                        <textarea rows="2" maxlength="1000" placeholder="I'll join 10 minutes later." @bind="RsvpComment"></textarea>
+                    </label>
+                    <div class="rsvp-actions">
+                        <button type="button" class="rsvp-decline @(currentResponse.Status == EventInvitationStatus.Declined ? "active" : "")"
+                                @onclick="() => SubmitRsvp(EventInvitationStatus.Declined)">Decline</button>
+                        <button type="button" class="rsvp-accept @(currentResponse.Status == EventInvitationStatus.Accepted ? "active" : "")"
+                                @onclick="() => SubmitRsvp(EventInvitationStatus.Accepted)">Accept</button>
+                    </div>
+                </section>
+            }
             <footer class="dialog-actions">
                 @if (!IsNew && Event.CanEdit)
                 {
@@ -94,46 +202,48 @@
     [Parameter] public EventCallback CloseRequested { get; set; }
     [Parameter] public EventCallback<CalendarEvent> SaveRequested { get; set; }
     [Parameter] public EventCallback<CalendarEvent> DeleteRequested { get; set; }
+    [Parameter] public EventCallback<InvitationResponseRequest> RsvpRequested { get; set; }
 
     private static readonly string[] Colors = ["violet", "blue", "green", "orange", "rose"];
-    private string Title = string.Empty, DateText = string.Empty, StartTimeText = string.Empty, EndTimeText = string.Empty;
+    private static readonly string[] Weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    private string Title = string.Empty, DateText = string.Empty, StartTimeText = string.Empty, EndTimeSelection = string.Empty;
     private string Description = string.Empty, MeetingUrl = string.Empty, Color = "violet", Error = string.Empty, CollaboratorText = string.Empty;
-    private bool IsAllDay, IsPublic, ConfirmDelete;
+    private string RsvpComment = string.Empty;
+    private bool IsAllDay, IsPublic, ConfirmDelete, ShowDatePicker;
+    private string? OpenTimePicker;
+    private DateTime CalendarMonth;
 
     protected override void OnInitialized()
     {
         Title = Event.Title;
         DateText = Event.Start.ToString("yyyy-MM-dd");
-        StartTimeText = Event.Start.ToString("HH:mm");
-        EndTimeText = Event.End.ToString("HH:mm");
+        StartTimeText = EventTimePicker.StartValue(Event.Start);
+        EndTimeSelection = EventTimePicker.EndValue(Event.Start, Event.End);
+        CalendarMonth = new DateTime(Event.Start.Year, Event.Start.Month, 1);
         Description = Event.Description;
         MeetingUrl = Event.MeetingUrl;
         Color = Event.Color;
         IsAllDay = Event.IsAllDay;
         IsPublic = Event.IsPublic;
         CollaboratorText = string.Join(", ", Event.CollaboratorEmails);
+        RsvpComment = CurrentUserResponse?.Comment ?? string.Empty;
     }
 
     private async Task Submit()
     {
         if (!Event.CanEdit) return;
         if (string.IsNullOrWhiteSpace(Title)) { Error = "Give your event a title."; return; }
-        if (!DateTime.TryParse(DateText, out var date)) { Error = "Choose a valid date."; return; }
+        if (!DateTime.TryParseExact(DateText, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var date))
+        { Error = "Choose a valid date."; return; }
         if (CalendarTimeRules.IsPastDate(date, DateTime.Today) && (IsNew || date.Date != Event.Start.Date))
         { Error = CalendarTimeRules.PastDateMessage; return; }
         var start = date.Date;
         var end = date.Date.AddDays(1);
         if (!IsAllDay)
         {
-            if (!TimeSpan.TryParse(StartTimeText, out var startTime) || !TimeSpan.TryParse(EndTimeText, out var endTime))
-            { Error = "Choose valid start and end times."; return; }
-            start = date.Date.Add(startTime);
-            end = date.Date.Add(endTime);
-            if (end <= start) end = end.AddDays(1);
-            if (!IsHalfHourBoundary(start) || !IsHalfHourBoundary(end))
-            { Error = "Start and end times must be on the hour or half hour."; return; }
-            if (end - start < TimeSpan.FromMinutes(30))
-            { Error = "Events must be at least 30 minutes long."; return; }
+            if (!EventTimePicker.TryResolve(date, StartTimeText, EndTimeSelection, out start, out end))
+            { Error = "Choose an end time at least 30 minutes after the start."; return; }
         }
         if (!MeetingUrlHelper.TryNormalize(MeetingUrl, out var normalizedMeetingUrl, out var meetingUrlError))
         { Error = meetingUrlError!; return; }
@@ -148,12 +258,105 @@
 
     private Task Close() => CloseRequested.InvokeAsync();
     private Task Delete() => DeleteRequested.InvokeAsync(Event);
-    private void UpdateDate(ChangeEventArgs args) => DateText = args.Value?.ToString() ?? string.Empty;
-    private void UpdateStartTime(ChangeEventArgs args) => StartTimeText = args.Value?.ToString() ?? string.Empty;
-    private void UpdateEndTime(ChangeEventArgs args) => EndTimeText = args.Value?.ToString() ?? string.Empty;
-    private string? MinimumDate => !IsNew && Event.Start.Date < DateTime.Today
-        ? null
-        : DateTime.Today.ToString("yyyy-MM-dd");
-    private static bool IsHalfHourBoundary(DateTime value) =>
-        value.Minute % 30 == 0 && value.Ticks % TimeSpan.TicksPerMinute == 0;
+    private Task SubmitRsvp(EventInvitationStatus status) =>
+        RsvpRequested.InvokeAsync(new InvitationResponseRequest(status, RsvpComment));
+    private EventInvitationResponseView? CurrentUserResponse => Event.InvitationResponses.SingleOrDefault(response => response.CanRespond);
+    private EventInvitationResponseSummary RsvpSummary => EventInvitationResponseSummary.From(Event.InvitationResponses);
+    private static string StatusClass(EventInvitationStatus status) => status.ToString().ToLowerInvariant();
+    private static string StatusLabel(EventInvitationStatus status) => status switch
+    {
+        EventInvitationStatus.Accepted => "Accepted",
+        EventInvitationStatus.Declined => "Declined",
+        _ => "Pending"
+    };
+    private static string RecipientInitial(EventInvitationResponseView response) =>
+        response.RecipientName.Length > 0 ? char.ToUpperInvariant(response.RecipientName[0]).ToString() : "?";
+    private void SelectStartTime(string value)
+    {
+        if (!EventTimePicker.StartOptions.Any(option => option.Value == value)) return;
+        StartTimeText = value;
+        EndTimeSelection = EventTimePicker.DefaultEndValue(value);
+        OpenTimePicker = null;
+        Error = string.Empty;
+    }
+    private void SelectEndTime(string value)
+    {
+        if (!EndTimeOptions.Any(option => option.Value == value)) return;
+        EndTimeSelection = value;
+        OpenTimePicker = null;
+    }
+    private IReadOnlyList<TimePickerOption> EndTimeOptions => EventTimePicker.EndOptions(StartTimeText, EndTimeSelection);
+    private DateTime SelectedDate => DateTime.TryParseExact(DateText, "yyyy-MM-dd",
+        System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date)
+        ? date.Date
+        : DateTime.Today;
+    private IEnumerable<DateTime> CalendarDays
+    {
+        get
+        {
+            var start = CalendarMonth.AddDays(-(((int)CalendarMonth.DayOfWeek + 6) % 7));
+            return Enumerable.Range(0, 42).Select(offset => start.AddDays(offset));
+        }
+    }
+    private DateTime MinimumCalendarMonth
+    {
+        get
+        {
+            var minimumDate = !IsNew && Event.Start.Date < DateTime.Today ? Event.Start.Date : DateTime.Today;
+            return new DateTime(minimumDate.Year, minimumDate.Month, 1);
+        }
+    }
+    private bool CanNavigatePrevious => CalendarMonth > MinimumCalendarMonth;
+    private bool IsDateUnavailable(DateTime day) => day.Date < DateTime.Today &&
+        (IsNew || day.Date != Event.Start.Date);
+    private static string DateLabel(DateTime day, bool unavailable) =>
+        $"{day:dddd, MMMM d, yyyy}{(day.Date == DateTime.Today ? ", Today" : string.Empty)}{(unavailable ? ", unavailable" : string.Empty)}";
+    private void ToggleDatePicker()
+    {
+        CalendarMonth = new DateTime(SelectedDate.Year, SelectedDate.Month, 1);
+        ShowDatePicker = !ShowDatePicker;
+        OpenTimePicker = null;
+    }
+    private void CloseDatePicker() => ShowDatePicker = false;
+    private void CloseTimePicker() => OpenTimePicker = null;
+    private void ClosePickers()
+    {
+        CloseDatePicker();
+        CloseTimePicker();
+    }
+    private void ToggleStartTimePicker() => ToggleTimePicker("start");
+    private void ToggleEndTimePicker() => ToggleTimePicker("end");
+    private void ToggleTimePicker(string picker)
+    {
+        ShowDatePicker = false;
+        OpenTimePicker = OpenTimePicker == picker ? null : picker;
+    }
+    private void SelectCurrentTime()
+    {
+        var now = DateTime.Now;
+        var roundedIndex = (int)Math.Round(
+            now.TimeOfDay.TotalMinutes / 30d,
+            MidpointRounding.AwayFromZero);
+        roundedIndex = Math.Clamp(roundedIndex, 0, EventTimePicker.StartOptions.Count - 1);
+        SelectStartTime(EventTimePicker.StartOptions[roundedIndex].Value);
+    }
+    private void PreviousCalendarMonth()
+    {
+        if (CanNavigatePrevious) CalendarMonth = CalendarMonth.AddMonths(-1);
+    }
+    private void NextCalendarMonth() => CalendarMonth = CalendarMonth.AddMonths(1);
+    private void SelectDate(DateTime day)
+    {
+        if (IsDateUnavailable(day)) return;
+        DateText = day.ToString("yyyy-MM-dd");
+        CalendarMonth = new DateTime(day.Year, day.Month, 1);
+        ShowDatePicker = false;
+        OpenTimePicker = null;
+        Error = string.Empty;
+    }
+    private void SelectToday() => SelectDate(DateTime.Today);
+    private void HandleDatePickerKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") ShowDatePicker = false;
+    }
 }

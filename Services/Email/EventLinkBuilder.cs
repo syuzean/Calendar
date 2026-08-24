@@ -6,9 +6,12 @@ public interface IEventLinkBuilder
 {
     string Event(Guid eventId);
     string Invitation(string token);
+    string Invitation(Guid invitationId);
 }
 
-public sealed class EventLinkBuilder(IOptions<EmailLinkOptions> options) : IEventLinkBuilder
+public sealed class EventLinkBuilder(
+    IOptions<EmailLinkOptions> options,
+    IInvitationAccessTokenService invitationAccessTokens) : IEventLinkBuilder
 {
     private readonly Uri _baseUri = CreateBaseUri(options.Value.PublicBaseUrl);
 
@@ -16,6 +19,8 @@ public sealed class EventLinkBuilder(IOptions<EmailLinkOptions> options) : IEven
 
     public string Invitation(string token) =>
         new Uri(_baseUri, $"invitation?token={Uri.EscapeDataString(token)}").AbsoluteUri;
+
+    public string Invitation(Guid invitationId) => Invitation(invitationAccessTokens.Create(invitationId));
 
     private static Uri CreateBaseUri(string value)
     {

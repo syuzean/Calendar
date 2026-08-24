@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f3f7;color:#17151f;font-family:Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f7">
+    <tr><td align="center" style="padding:32px 14px">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:580px;background:#ffffff;border:1px solid #e8e4ed;border-radius:18px;overflow:hidden">
+        <tr><td style="padding:24px 28px;background:#211937;color:#ffffff">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="font-size:20px;font-weight:700">LUMA <span style="color:#c7b9ff">Calendar</span></td>
+            <td align="right" style="font-size:12px;color:#d8d0e7">Event cancelled</td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:30px 28px 12px">
+          <p style="margin:0 0 8px;font-size:15px;line-height:1.5;color:#5f5966">Hi {{RecipientName}},</p>
+          <p style="margin:0;font-size:18px;line-height:1.5"><strong>This event is no longer taking place.</strong></p>
+        </td></tr>
+        <tr><td style="padding:18px 28px 32px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eadfe2;border-left:6px solid {{EventColor}};border-radius:13px;background:#fffbfb">
+            <tr><td style="padding:22px">
+              <h1 style="margin:0 0 18px;font-size:24px;line-height:1.25;color:#4b444d;text-decoration:line-through">{{EventTitle}}</h1>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:1.55;color:#6b646d">
+                <tr><td width="105" style="padding:3px 0;font-weight:700;color:#3d363f">Original date</td><td style="padding:3px 0">{{EventDate}}</td></tr>
+                <tr><td width="105" style="padding:3px 0;font-weight:700;color:#3d363f">Original time</td><td style="padding:3px 0">{{StartTime}}{{#EndTime}} – {{EndTime}}{{/EndTime}}</td></tr>
+                <tr><td width="105" style="padding:3px 0;font-weight:700;color:#3d363f">Organizer</td><td style="padding:3px 0">{{OrganizerName}}</td></tr>
+              </table>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:18px 28px;background:#faf9fb;border-top:1px solid #eeeaf1;font-size:11px;line-height:1.5;color:#8d8794">
+          This message was sent to {{RecipientEmail}} because this event was shared with you.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>

@@ -5,6 +5,7 @@
 @using global::Calendar.Models
 @using global::Calendar.Services
 @inject CalendarStore Store
+@inject IEventInvitationService InvitationService
 @inject IJSRuntime JS
 
 <PageTitle>Luma Calendar</PageTitle>
@@ -109,7 +110,7 @@
 }
 
 @if (EditingEvent is not null)
-{ <EventDialog @key="DialogKey" Event="EditingEvent" IsNew="IsCreating" ErrorMessage="@OperationError" CloseRequested="CloseDialog" SaveRequested="SaveEvent" DeleteRequested="DeleteEvent" /> }
+{ <EventDialog @key="DialogKey" Event="EditingEvent" IsNew="IsCreating" ErrorMessage="@OperationError" CloseRequested="CloseDialog" SaveRequested="SaveEvent" DeleteRequested="DeleteEvent" RsvpRequested="RespondToInvitation" /> }
 
 @code {
     private static readonly string[] Views = ["Month", "Week", "Day"];
@@ -253,6 +254,31 @@
         DialogKey++;
     }
     private void OpenEvent(CalendarEvent item) { OperationError = null; EditingEvent = item.Copy(); IsCreating = false; DialogKey++; }
+    private async Task RespondToInvitation(InvitationResponseRequest request)
+    {
+        if (EditingEvent is not { } item) return;
+        var result = await InvitationService.RespondAsUserAsync(
+            item.Id, Store.CurrentUserId, request.Status, request.Comment);
+        if (result.Status == InvitationResponseResultStatus.Success)
+        {
+            OperationError = null;
+            await Store.ReloadAsync();
+            EditingEvent = Store.Events.SingleOrDefault(calendarEvent => calendarEvent.Id == item.Id)?.Copy();
+            DialogKey++;
+            return;
+        }
+
+        OperationError = result.Status switch
+        {
+            InvitationResponseResultStatus.Conflict => "Your response changed in another session. The latest response has been loaded; please try again.",
+            InvitationResponseResultStatus.InvalidComment => "Comments cannot exceed 1,000 characters.",
+            InvitationResponseResultStatus.Expired => "This invitation has expired.",
+            _ => "You are not authorized to respond to this invitation."
+        };
+        await Store.ReloadAsync();
+        EditingEvent = Store.Events.SingleOrDefault(calendarEvent => calendarEvent.Id == item.Id)?.Copy();
+        DialogKey++;
+    }
     private void CloseDialog() { OperationError = null; EditingEvent = null; }
     private async Task SaveEvent(CalendarEvent item)
     {

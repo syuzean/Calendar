@@ -5,6 +5,7 @@ using Calendar.Services;
 using Calendar.Services.Email;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Calendar
@@ -34,6 +35,7 @@ namespace Calendar
                     options.SlidingExpiration = true;
                 });
             builder.Services.AddAuthorization();
+            builder.Services.AddDataProtection();
             builder.Services.Configure<SmtpOptions>(options =>
             {
                 builder.Configuration.GetSection(SmtpOptions.SectionName).Bind(options);
@@ -42,6 +44,7 @@ namespace Calendar
             builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
             builder.Services.Configure<EmailLinkOptions>(builder.Configuration.GetSection(EmailLinkOptions.SectionName));
             builder.Services.AddSingleton<IEventLinkBuilder, EventLinkBuilder>();
+            builder.Services.AddSingleton<IInvitationAccessTokenService, InvitationAccessTokenService>();
             builder.Services.AddSingleton<IEmailTemplateRenderer>(_ =>
                 new FileEmailTemplateRenderer(Path.Combine(builder.Environment.ContentRootPath, "EmailTemplates")));
             builder.Services.AddSingleton<IEventShareNotifier, EventShareNotifier>();

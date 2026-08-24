@@ -23,6 +23,7 @@ public sealed class CalendarEvent
     [NotMapped] public bool CanEdit { get; set; }
     [NotMapped] public bool IsCollaborator { get; set; }
     [NotMapped] public List<string> CollaboratorEmails { get; set; } = [];
+    [NotMapped] public List<EventInvitationResponseView> InvitationResponses { get; set; } = [];
 
     public CalendarEvent Copy() => new()
     {
@@ -40,6 +41,7 @@ public sealed class CalendarEvent
         OwnerName = OwnerName,
         CanEdit = CanEdit,
         IsCollaborator = IsCollaborator,
-        CollaboratorEmails = [.. CollaboratorEmails]
+        CollaboratorEmails = [.. CollaboratorEmails],
+        InvitationResponses = [.. InvitationResponses]
     };
 }

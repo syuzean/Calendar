@@ -5,6 +5,8 @@ using Calendar.Models;
 using Calendar.Services;
 using Calendar.Services.Email;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -399,8 +401,53 @@ public sealed class CalendarStoreTests
         Assert.Equal(item.Start, notification.Start);
         Assert.Equal(item.End, notification.End);
         Assert.Equal(fixture.Owner.Name, notification.OrganizerName);
-        Assert.Contains(item.Id.ToString(), notification.EventUrl);
+        Assert.Contains("/invitation?token=", notification.EventUrl);
         Assert.Equal(created.MeetingUrl, notification.MeetingUrl);
+        await using var db = fixture.CreateDbContext();
+        var invitation = await db.EventInvitations.SingleAsync();
+        Assert.Equal(EventInvitationStatus.Pending, invitation.Status);
+        Assert.Equal(fixture.OtherUser.Id, invitation.ClaimedByUserId);
+    }
+
+    [Fact]
+    public async Task Organizer_CanViewRecipientResponseAndComment()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.CollaboratorEmails.Add(fixture.OtherUser.Email);
+        await store.CreateAsync(item);
+        var eventId = store.Events.Single().Id;
+        var service = fixture.CreateInvitationService();
+
+        var result = await service.RespondAsUserAsync(
+            eventId,
+            fixture.OtherUser.Id,
+            EventInvitationStatus.Accepted,
+            "I'll join 10 minutes later.");
+        await store.ReloadAsync();
+
+        Assert.Equal(InvitationResponseResultStatus.Success, result.Status);
+        var response = Assert.Single(store.Events.Single().InvitationResponses);
+        Assert.Equal(fixture.OtherUser.Name, response.RecipientName);
+        Assert.Equal(EventInvitationStatus.Accepted, response.Status);
+        Assert.Equal("I'll join 10 minutes later.", response.Comment);
+        Assert.False(response.CanRespond);
+        var acceptedSummary = EventInvitationResponseSummary.From(store.Events.Single().InvitationResponses);
+        Assert.Equal((1, 0, 0), (acceptedSummary.Accepted, acceptedSummary.Declined, acceptedSummary.Pending));
+
+        await service.RespondAsUserAsync(
+            eventId,
+            fixture.OtherUser.Id,
+            EventInvitationStatus.Declined,
+            "I can no longer attend.");
+        await store.ReloadAsync();
+
+        var changedResponse = Assert.Single(store.Events.Single().InvitationResponses);
+        var declinedSummary = EventInvitationResponseSummary.From(store.Events.Single().InvitationResponses);
+        Assert.Equal(EventInvitationStatus.Declined, changedResponse.Status);
+        Assert.Equal("I can no longer attend.", changedResponse.Comment);
+        Assert.Equal((0, 1, 0), (declinedSummary.Accepted, declinedSummary.Declined, declinedSummary.Pending));
     }
 
     [Fact]
@@ -477,6 +524,199 @@ public sealed class CalendarStoreTests
         Assert.Contains("event was shared", store.LastNotice, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task TitleChange_SendsEventUpdated()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.Title = "Updated planning session";
+
+        await store.UpdateAsync(edit);
+
+        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
+        Assert.Equal("Updated planning session", notification.EventTitle);
+        Assert.Contains("Title", notification.ChangedFields);
+        var notificationUri = new Uri(notification.EventUrl);
+        var token = QueryHelpers.ParseQuery(notificationUri.Query)["token"].Single()
+            ?? throw new InvalidOperationException("The update notification did not contain an invitation token.");
+        var invitationContext = await InvitationFlow.ResolveLoginContextAsync(
+            fixture.CreateInvitationService(), token, notificationUri.PathAndQuery);
+        Assert.Equal("/invitation", notificationUri.AbsolutePath);
+        Assert.True(invitationContext.ShowGuestOption);
+        var guestEvent = await fixture.CreateInvitationService().GetGuestEventAsync(token);
+        Assert.Equal("Updated planning session", guestEvent.Event?.Title);
+    }
+
+    [Fact]
+    public async Task DateAndTimeChange_SendsEventUpdated()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.Start = edit.Start.AddDays(1).AddHours(2);
+        edit.End = edit.End.AddDays(1).AddHours(2);
+
+        await store.UpdateAsync(edit);
+
+        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
+        Assert.Equal(edit.Start, notification.Start);
+        Assert.Contains("Date", notification.ChangedFields);
+        Assert.Contains("Time", notification.ChangedFields);
+    }
+
+    [Fact]
+    public async Task MeetingLinkChange_SendsEventUpdated()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.MeetingUrl = "https://meet.google.com/new-room";
+
+        await store.UpdateAsync(edit);
+
+        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
+        Assert.Equal(edit.MeetingUrl, notification.MeetingUrl);
+        Assert.Contains("Meeting link", notification.ChangedFields);
+    }
+
+    [Fact]
+    public async Task SaveWithoutMeaningfulChanges_SendsNoLifecycleEmail()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+
+        await store.UpdateAsync(store.Events.Single().Copy());
+
+        Assert.Empty(fixture.Notifier.Notifications);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
+        Assert.Empty(fixture.Notifier.CancelledNotifications);
+    }
+
+    [Fact]
+    public async Task ColorOnlyChange_SendsNoEventUpdated()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.Color = "blue";
+
+        await store.UpdateAsync(edit);
+
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
+        Assert.Equal("blue", store.Events.Single().Color);
+    }
+
+    [Fact]
+    public async Task MultipleRecipients_EachReceiveOneEventUpdated()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(
+            fixture, fixture.OtherUser.Email, "future-user@luma.test", fixture.OtherUser.Email.ToUpperInvariant());
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.Description = "Updated agenda";
+
+        await store.UpdateAsync(edit);
+
+        Assert.Equal(2, fixture.Notifier.UpdatedNotifications.Count);
+        Assert.Equal(2, fixture.Notifier.UpdatedNotifications
+            .Select(notification => notification.RecipientEmail.ToUpperInvariant()).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task NewlyAddedRecipient_GetsSharedButNotUpdatedInSameOperation()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var edit = store.Events.Single().Copy();
+        edit.Title = "Updated for existing recipients";
+        edit.CollaboratorEmails.Add("future-user@luma.test");
+
+        await store.UpdateAsync(edit);
+
+        Assert.Equal("future-user@luma.test", Assert.Single(fixture.Notifier.Notifications).RecipientEmail);
+        Assert.Equal(fixture.OtherUser.Email, Assert.Single(fixture.Notifier.UpdatedNotifications).RecipientEmail);
+    }
+
+    [Fact]
+    public async Task Deletion_SendsEventCancelled()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        var item = store.Events.Single();
+
+        await store.DeleteAsync(item.Id, item.Version);
+
+        var notification = Assert.Single(fixture.Notifier.CancelledNotifications);
+        Assert.Equal(item.Title, notification.EventTitle);
+        Assert.Equal(item.Start, notification.Start);
+    }
+
+    [Fact]
+    public async Task DeletionNotification_ReachesAllRelevantRecipientsOnce()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email, "future-user@luma.test");
+        fixture.Notifier.Reset();
+        var item = store.Events.Single();
+
+        await store.DeleteAsync(item.Id, item.Version);
+
+        Assert.Equal(2, fixture.Notifier.CancelledNotifications.Count);
+        Assert.Equal(2, fixture.Notifier.CancelledNotifications
+            .Select(notification => notification.RecipientEmail.ToUpperInvariant()).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task UpdateEmailFailure_DoesNotUndoSuccessfulUpdate()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        fixture.Notifier.ThrowOnUpdated = true;
+        var edit = store.Events.Single().Copy();
+        edit.Title = "Persisted despite email failure";
+
+        await store.UpdateAsync(edit);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(edit.Title, (await db.Events.SingleAsync()).Title);
+        Assert.Contains("notification emails", store.LastNotice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CancellationEmailFailure_DoesNotUndoSuccessfulDeletion()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = await CreateSharedEventAsync(fixture, fixture.OtherUser.Email);
+        fixture.Notifier.Reset();
+        fixture.Notifier.ThrowOnCancelled = true;
+        var item = store.Events.Single();
+
+        await store.DeleteAsync(item.Id, item.Version);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.Events.ToListAsync());
+        Assert.Contains("cancellation emails", store.LastNotice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<CalendarStore> CreateSharedEventAsync(TestFixture fixture, params string[] recipients)
+    {
+        var store = await fixture.CreateStoreAsync(fixture.Owner);
+        var item = NewEvent();
+        item.CollaboratorEmails.AddRange(recipients);
+        await store.CreateAsync(item);
+        return store;
+    }
+
     private static CalendarEvent NewEvent(Guid? ownerId = null) => new()
     {
         Title = "Planning session",
@@ -488,6 +728,8 @@ public sealed class CalendarStoreTests
 
     private sealed class TestFixture(DbContextOptions<CalendarDbContext> options, AppUser owner, AppUser otherUser)
     {
+        private readonly IInvitationAccessTokenService _invitationAccessTokens =
+            new InvitationAccessTokenService(new EphemeralDataProtectionProvider());
         public AppUser Owner { get; } = owner;
         public AppUser OtherUser { get; } = otherUser;
         public RecordingEventShareNotifier Notifier { get; } = new();
@@ -506,6 +748,8 @@ public sealed class CalendarStoreTests
         }
 
         public CalendarDbContext CreateDbContext() => new(options);
+        public EventInvitationService CreateInvitationService() =>
+            new(new TestDbContextFactory(options), _invitationAccessTokens);
 
         public async Task<CalendarStore> CreateStoreAsync(AppUser user)
         {
@@ -514,7 +758,7 @@ public sealed class CalendarStoreTests
                 factory,
                 new TestAuthenticationStateProvider(user),
                 Notifier,
-                new TestEventLinkBuilder(),
+                new TestEventLinkBuilder(_invitationAccessTokens),
                 NullLogger<CalendarStore>.Instance);
             await store.InitializeAsync();
             return store;
@@ -550,7 +794,21 @@ public sealed class CalendarStoreTests
     private sealed class RecordingEventShareNotifier : IEventShareNotifier
     {
         public List<EventShareNotification> Notifications { get; } = [];
+        public List<EventUpdatedNotification> UpdatedNotifications { get; } = [];
+        public List<EventCancelledNotification> CancelledNotifications { get; } = [];
         public bool ThrowOnNotify { get; set; }
+        public bool ThrowOnUpdated { get; set; }
+        public bool ThrowOnCancelled { get; set; }
+
+        public void Reset()
+        {
+            Notifications.Clear();
+            UpdatedNotifications.Clear();
+            CancelledNotifications.Clear();
+            ThrowOnNotify = false;
+            ThrowOnUpdated = false;
+            ThrowOnCancelled = false;
+        }
 
         public Task NotifyAsync(EventShareNotification notification, CancellationToken cancellationToken = default)
         {
@@ -560,11 +818,30 @@ public sealed class CalendarStoreTests
             Notifications.Add(notification);
             return Task.CompletedTask;
         }
+
+        public Task NotifyUpdatedAsync(EventUpdatedNotification notification, CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnUpdated)
+                throw new InvalidOperationException("Simulated update email failure.");
+
+            UpdatedNotifications.Add(notification);
+            return Task.CompletedTask;
+        }
+
+        public Task NotifyCancelledAsync(EventCancelledNotification notification, CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnCancelled)
+                throw new InvalidOperationException("Simulated cancellation email failure.");
+
+            CancelledNotifications.Add(notification);
+            return Task.CompletedTask;
+        }
     }
 
-    private sealed class TestEventLinkBuilder : IEventLinkBuilder
+    private sealed class TestEventLinkBuilder(IInvitationAccessTokenService invitationAccessTokens) : IEventLinkBuilder
     {
         public string Event(Guid eventId) => $"https://luma.test/?event={eventId:D}";
         public string Invitation(string token) => $"https://luma.test/invitation?token={token}";
+        public string Invitation(Guid invitationId) => Invitation(invitationAccessTokens.Create(invitationId));
     }
 }

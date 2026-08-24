@@ -36,6 +36,55 @@ public sealed class EventShareNotifierTests
         Assert.Contains("https://zoom.us/j/123456789", message.PlainTextBody);
     }
 
+    [Fact]
+    public async Task UpdatedNotification_UsesEventUpdatedTemplate()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new EventShareNotifier(sender, TemplateRenderer());
+
+        await notifier.NotifyUpdatedAsync(new EventUpdatedNotification(
+            "Collaborator",
+            "collaborator@luma.test",
+            "Planning session",
+            new DateTime(2026, 10, 20, 15, 0, 0),
+            new DateTime(2026, 10, 20, 16, 0, 0),
+            false,
+            "Owner",
+            "Updated agenda",
+            "violet",
+            "https://luma.test/?event=123",
+            string.Empty,
+            ["Time", "Description"]));
+
+        var message = Assert.Single(sender.Messages);
+        Assert.StartsWith("Updated:", message.Subject);
+        Assert.Contains("The event has been updated", message.HtmlBody);
+        Assert.Contains("Time, Description", message.PlainTextBody);
+    }
+
+    [Fact]
+    public async Task CancelledNotification_UsesEventCancelledTemplateWithoutMeetingAction()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new EventShareNotifier(sender, TemplateRenderer());
+
+        await notifier.NotifyCancelledAsync(new EventCancelledNotification(
+            "Collaborator",
+            "collaborator@luma.test",
+            "Planning session",
+            new DateTime(2026, 10, 20, 9, 0, 0),
+            new DateTime(2026, 10, 20, 10, 0, 0),
+            false,
+            "Owner",
+            "violet"));
+
+        var message = Assert.Single(sender.Messages);
+        Assert.StartsWith("Cancelled:", message.Subject);
+        Assert.Contains("no longer taking place", message.HtmlBody);
+        Assert.DoesNotContain("Join meeting", message.HtmlBody);
+        Assert.DoesNotContain("Open in LUMA", message.HtmlBody);
+    }
+
     private static FileEmailTemplateRenderer TemplateRenderer() =>
         new(Path.Combine(AppContext.BaseDirectory, "EmailTemplates"));
 

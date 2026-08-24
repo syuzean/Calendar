@@ -99,12 +99,19 @@ public sealed class CalendarStore(
         EnsureCurrentVersion(entity, item.Version);
         if (CalendarTimeRules.IsPastDate(item.Start, DateTime.Today) && item.Start.Date != entity.Start.Date)
             throw new ValidationException(CalendarTimeRules.PastDateMessage);
+        var meaningfulChanges = MeaningfulChanges(entity, item);
         ApplyChanges(entity, item);
         entity.Version = Guid.NewGuid();
 
         var newlyAdded = await ReplaceParticipantsAsync(db, entity, item.CollaboratorEmails);
+        if (meaningfulChanges.Count > 0) RenewActiveInvitationAccess(entity);
         await SaveWithConcurrencyHandlingAsync(db);
         await NotifyNewCollaboratorsAsync(entity, newlyAdded);
+        if (meaningfulChanges.Count > 0)
+        {
+            var excludedEmails = newlyAdded.Select(recipient => recipient.NormalizedEmail).ToHashSet(StringComparer.Ordinal);
+            await NotifyUpdatedAfterCommitAsync(entity, meaningfulChanges, excludedEmails);
+        }
         await ReloadAsync();
     }
 
@@ -112,19 +119,29 @@ public sealed class CalendarStore(
     {
         LastNotice = null;
         await using var db = await dbFactory.CreateDbContextAsync();
-        var entity = await db.Events.SingleOrDefaultAsync(item => item.Id == id)
+        var entity = await db.Events
+            .Include(item => item.Participants)
+                .ThenInclude(participant => participant.User)
+            .Include(item => item.Invitations)
+            .SingleOrDefaultAsync(item => item.Id == id)
             ?? throw new EventConcurrencyException();
 
         EnsureOwner(entity);
         EnsureCurrentVersion(entity, version);
         EnsureNotPastDate(targetStart);
+        var moveChanges = new List<string>();
+        if (entity.Start.Date != targetStart.Date) moveChanges.Add("Date");
+        if (entity.Start.TimeOfDay != targetStart.TimeOfDay) moveChanges.Add("Time");
         var duration = entity.End - entity.Start;
         entity.Start = targetStart;
         entity.End = targetStart.Add(duration);
         Validate(entity);
         entity.Version = Guid.NewGuid();
+        if (moveChanges.Count > 0) RenewActiveInvitationAccess(entity);
 
         await SaveWithConcurrencyHandlingAsync(db);
+        if (moveChanges.Count > 0)
+            await NotifyUpdatedAfterCommitAsync(entity, moveChanges);
         await ReloadAsync();
     }
 
@@ -163,13 +180,19 @@ public sealed class CalendarStore(
     {
         LastNotice = null;
         await using var db = await dbFactory.CreateDbContextAsync();
-        var entity = await db.Events.SingleOrDefaultAsync(item => item.Id == id);
+        var entity = await db.Events
+            .Include(item => item.Participants)
+                .ThenInclude(participant => participant.User)
+            .Include(item => item.Invitations)
+            .SingleOrDefaultAsync(item => item.Id == id);
         if (entity is null) throw new EventConcurrencyException();
 
         EnsureOwner(entity);
         EnsureCurrentVersion(entity, version);
+        var recipients = ActiveRecipients(entity);
         db.Events.Remove(entity);
         await SaveWithConcurrencyHandlingAsync(db);
+        await NotifyCancelledAsync(entity, recipients);
         await ReloadAsync();
     }
 
@@ -207,26 +230,52 @@ public sealed class CalendarStore(
         foreach (var user in matchedUsers)
         {
             var invitation = entity.Invitations.SingleOrDefault(item => item.NormalizedRecipientEmail == user.NormalizedEmail);
-            var alreadyInvited = invitation is { Status: EventInvitationStatus.Pending } && invitation.ExpiresUtc > now;
-            if (!existingParticipantIds.Contains(user.Id))
+            var alreadyParticipant = existingParticipantIds.Contains(user.Id);
+            var hasUsableInvitation = invitation is not null && invitation.Status != EventInvitationStatus.Revoked &&
+                (invitation.Status != EventInvitationStatus.Pending || invitation.ExpiresUtc > now || alreadyParticipant);
+            string? invitationToken = null;
+            if (!hasUsableInvitation)
+            {
+                var token = EventInvitationService.CreateToken();
+                invitationToken = token.Token;
+                if (invitation is null)
+                {
+                    invitation = new EventInvitation
+                    {
+                        EventId = entity.Id,
+                        RecipientEmail = user.Email,
+                        NormalizedRecipientEmail = user.NormalizedEmail
+                    };
+                    entity.Invitations.Add(invitation);
+                    db.EventInvitations.Add(invitation);
+                }
+
+                invitation.RecipientEmail = user.Email;
+                invitation.Status = EventInvitationStatus.Pending;
+                invitation.TokenHash = token.Hash;
+                invitation.CreatedUtc = now;
+                invitation.ExpiresUtc = now.AddDays(14);
+                invitation.ResponseComment = string.Empty;
+                invitation.ResponseUtc = null;
+            }
+
+            if (!alreadyParticipant)
             {
                 entity.Participants.Add(new EventParticipant { EventId = entity.Id, UserId = user.Id });
-                if (!alreadyInvited)
-                    notifications.Add(new(user.Name, user.Email, null));
+                if (invitationToken is not null)
+                    notifications.Add(new(user.Name, user.Email, user.NormalizedEmail, invitationToken));
             }
-            if (invitation is not null)
-            {
-                invitation.Status = EventInvitationStatus.Accepted;
-                invitation.ClaimedUtc ??= now;
-                invitation.ClaimedByUserId ??= user.Id;
-            }
+
+            invitation!.ClaimedUtc ??= now;
+            invitation.ClaimedByUserId ??= user.Id;
         }
 
         var matchedEmails = matchedUsers.Select(user => user.NormalizedEmail).ToHashSet(StringComparer.Ordinal);
         foreach (var normalizedEmail in normalizedEmails.Where(email => !matchedEmails.Contains(email)))
         {
             var invitation = entity.Invitations.SingleOrDefault(item => item.NormalizedRecipientEmail == normalizedEmail);
-            if (invitation is { Status: EventInvitationStatus.Pending } && invitation.ExpiresUtc > now)
+            if (invitation is not null && invitation.Status != EventInvitationStatus.Revoked &&
+                (invitation.Status != EventInvitationStatus.Pending || invitation.ExpiresUtc > now))
                 continue;
 
             var (token, tokenHash) = EventInvitationService.CreateToken();
@@ -239,6 +288,7 @@ public sealed class CalendarStore(
                     NormalizedRecipientEmail = normalizedEmail
                 };
                 entity.Invitations.Add(invitation);
+                db.EventInvitations.Add(invitation);
             }
             invitation.RecipientEmail = requestedEmails[normalizedEmail];
             invitation.Status = EventInvitationStatus.Pending;
@@ -247,7 +297,9 @@ public sealed class CalendarStore(
             invitation.ExpiresUtc = now.AddDays(14);
             invitation.ClaimedUtc = null;
             invitation.ClaimedByUserId = null;
-            notifications.Add(new(string.Empty, invitation.RecipientEmail, token));
+            invitation.ResponseComment = string.Empty;
+            invitation.ResponseUtc = null;
+            notifications.Add(new(string.Empty, invitation.RecipientEmail, invitation.NormalizedRecipientEmail, token));
         }
 
         foreach (var invitation in entity.Invitations.Where(item => !requestedEmails.ContainsKey(item.NormalizedRecipientEmail)))
@@ -286,6 +338,160 @@ public sealed class CalendarStore(
                 logger.LogWarning(exception, "An event share notification could not be sent for event {EventId}.", entity.Id);
                 LastNotice = "The event was shared, but its notification email could not be sent.";
             }
+        }
+    }
+
+    private async Task<List<LifecycleRecipient>> LoadActiveRecipientsAsync(
+        Guid eventId,
+        IReadOnlySet<string>? excludedEmails = null)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var entity = await db.Events.AsNoTracking()
+            .Include(item => item.Participants)
+                .ThenInclude(participant => participant.User)
+            .Include(item => item.Invitations)
+            .SingleAsync(item => item.Id == eventId);
+        return ActiveRecipients(entity, excludedEmails);
+    }
+
+    private List<LifecycleRecipient> ActiveRecipients(
+        CalendarEvent entity,
+        IReadOnlySet<string>? excludedEmails = null)
+    {
+        var recipients = new Dictionary<string, LifecycleRecipient>(StringComparer.Ordinal);
+        foreach (var participant in entity.Participants.Where(item => item.User is not null))
+        {
+            var user = participant.User!;
+            if (user.NormalizedEmail == CurrentUserNormalizedEmail || excludedEmails?.Contains(user.NormalizedEmail) == true)
+                continue;
+            recipients[user.NormalizedEmail] = new(user.Name, user.Email, user.NormalizedEmail, Guid.Empty);
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var invitation in entity.Invitations.Where(item =>
+                     item.Status != EventInvitationStatus.Revoked &&
+                     (item.ExpiresUtc > now || item.ClaimedByUserId is not null)))
+        {
+            if (invitation.NormalizedRecipientEmail == CurrentUserNormalizedEmail ||
+                excludedEmails?.Contains(invitation.NormalizedRecipientEmail) == true)
+                continue;
+            if (recipients.TryGetValue(invitation.NormalizedRecipientEmail, out var participantRecipient))
+            {
+                recipients[invitation.NormalizedRecipientEmail] = participantRecipient with
+                {
+                    InvitationId = invitation.Id
+                };
+            }
+            else
+            {
+                recipients[invitation.NormalizedRecipientEmail] = new(
+                    string.Empty,
+                    invitation.RecipientEmail,
+                    invitation.NormalizedRecipientEmail,
+                    invitation.Id);
+            }
+        }
+
+        return recipients.Values
+            .Where(recipient => recipient.InvitationId != Guid.Empty)
+            .OrderBy(recipient => recipient.NormalizedEmail)
+            .ToList();
+    }
+
+    private async Task NotifyUpdatedAsync(
+        CalendarEvent entity,
+        IEnumerable<LifecycleRecipient> recipients,
+        IReadOnlyList<string> changedFields)
+    {
+        foreach (var recipient in recipients)
+        {
+            try
+            {
+                await shareNotifier.NotifyUpdatedAsync(new EventUpdatedNotification(
+                    recipient.Name,
+                    recipient.Email,
+                    entity.Title,
+                    entity.Start,
+                    entity.End,
+                    entity.IsAllDay,
+                    CurrentUserName,
+                    entity.Description,
+                    entity.Color,
+                    eventLinkBuilder.Invitation(recipient.InvitationId),
+                    entity.MeetingUrl,
+                    changedFields));
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "An event update notification could not be sent for event {EventId}.", entity.Id);
+                LastNotice = "The event was updated, but one or more notification emails could not be sent.";
+            }
+        }
+    }
+
+    private async Task NotifyUpdatedAfterCommitAsync(
+        CalendarEvent entity,
+        IReadOnlyList<string> changedFields,
+        IReadOnlySet<string>? excludedEmails = null)
+    {
+        try
+        {
+            var recipients = await LoadActiveRecipientsAsync(entity.Id, excludedEmails);
+            await NotifyUpdatedAsync(entity, recipients, changedFields);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Event update notifications could not be prepared for event {EventId}.", entity.Id);
+            LastNotice = "The event was updated, but one or more notification emails could not be sent.";
+        }
+    }
+
+    private async Task NotifyCancelledAsync(CalendarEvent entity, IEnumerable<LifecycleRecipient> recipients)
+    {
+        foreach (var recipient in recipients)
+        {
+            try
+            {
+                await shareNotifier.NotifyCancelledAsync(new EventCancelledNotification(
+                    recipient.Name,
+                    recipient.Email,
+                    entity.Title,
+                    entity.Start,
+                    entity.End,
+                    entity.IsAllDay,
+                    CurrentUserName,
+                    entity.Color));
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "An event cancellation notification could not be sent for event {EventId}.", entity.Id);
+                LastNotice = "The event was deleted, but one or more cancellation emails could not be sent.";
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> MeaningfulChanges(CalendarEvent current, CalendarEvent updated)
+    {
+        var changes = new List<string>();
+        if (!string.Equals(current.Title, updated.Title.Trim(), StringComparison.Ordinal)) changes.Add("Title");
+        if (current.Start.Date != updated.Start.Date || current.End.Date != updated.End.Date) changes.Add("Date");
+        if (current.Start.TimeOfDay != updated.Start.TimeOfDay || current.End.TimeOfDay != updated.End.TimeOfDay) changes.Add("Time");
+        if (current.IsAllDay != updated.IsAllDay) changes.Add("All-day setting");
+        if (!string.Equals(current.Description, updated.Description ?? string.Empty, StringComparison.Ordinal)) changes.Add("Description");
+        if (!string.Equals(current.MeetingUrl, updated.MeetingUrl?.Trim() ?? string.Empty, StringComparison.Ordinal)) changes.Add("Meeting link");
+        return changes;
+    }
+
+    private static void RenewActiveInvitationAccess(CalendarEvent entity)
+    {
+        var now = DateTime.UtcNow;
+        var renewedExpiry = now.AddDays(14);
+        foreach (var invitation in entity.Invitations.Where(invitation =>
+                     invitation.Status != EventInvitationStatus.Revoked &&
+                     (invitation.ExpiresUtc > now || invitation.ClaimedByUserId is not null)))
+        {
+            if (invitation.ExpiresUtc < renewedExpiry)
+                invitation.ExpiresUtc = renewedExpiry;
         }
     }
 
@@ -366,11 +572,28 @@ public sealed class CalendarStore(
         CollaboratorEmails = entity.OwnerId == CurrentUserId || entity.Participants.Any(participant => participant.UserId == CurrentUserId)
             ? entity.Participants.Where(participant => participant.User is not null).Select(participant => participant.User!.Email)
                 .Concat(entity.Invitations
-                    .Where(invitation => invitation.Status == EventInvitationStatus.Pending && invitation.ExpiresUtc > DateTime.UtcNow)
+                    .Where(invitation => invitation.Status != EventInvitationStatus.Revoked)
                     .Select(invitation => invitation.RecipientEmail))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList()
-            : []
+            : [],
+        InvitationResponses = entity.Invitations
+            .Where(invitation => invitation.Status != EventInvitationStatus.Revoked &&
+                (entity.OwnerId == CurrentUserId || invitation.NormalizedRecipientEmail == CurrentUserNormalizedEmail))
+            .Select(invitation => new EventInvitationResponseView(
+                invitation.Id,
+                entity.Participants.FirstOrDefault(participant =>
+                    participant.User != null && participant.User.NormalizedEmail == invitation.NormalizedRecipientEmail)?.User?.Name
+                    ?? invitation.RecipientEmail,
+                invitation.RecipientEmail,
+                invitation.Status,
+                invitation.ResponseComment,
+                invitation.ResponseUtc,
+                entity.OwnerId != CurrentUserId &&
+                    invitation.NormalizedRecipientEmail == CurrentUserNormalizedEmail &&
+                    entity.Participants.Any(participant => participant.UserId == CurrentUserId)))
+            .OrderBy(response => response.RecipientName)
+            .ToList()
     };
 
     private static string NormalizeEmail(string email) => email.Trim().ToUpperInvariant();
@@ -386,7 +609,8 @@ public sealed class CalendarStore(
             throw new ValidationException(CalendarTimeRules.PastDateMessage);
     }
 
-    private sealed record NewShareRecipient(string Name, string Email, string? InvitationToken);
+    private sealed record NewShareRecipient(string Name, string Email, string NormalizedEmail, string? InvitationToken);
+    private sealed record LifecycleRecipient(string Name, string Email, string NormalizedEmail, Guid InvitationId);
 }
 
 public sealed class EventConcurrencyException : InvalidOperationException
