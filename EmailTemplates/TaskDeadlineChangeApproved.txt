@@ -1,0 +1,19 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{TaskMaker}} approved your deadline-change request.
+
+{{TaskTitle}}
+Previous deadline: {{CurrentDeadline}}
+Approved deadline: {{RequestedDeadline}}
+{{#Comment}}
+Your comment: {{Comment}}
+{{/Comment}}
+Approved: {{ActionAt}}
+
+The assignment is now accepted with the approved deadline.
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

@@ -1,0 +1,17 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{TaskDoer}} requested a deadline change for this task:
+
+{{TaskTitle}}
+Current deadline: {{CurrentDeadline}}
+Requested deadline: {{RequestedDeadline}}
+{{#Comment}}
+Comment: {{Comment}}
+{{/Comment}}
+Requested: {{ActionAt}}
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

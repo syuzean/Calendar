@@ -1,0 +1,144 @@
+<div class="field date-picker-field luma-date-only-picker @AdditionalClass @(OpenUpward ? "open-upward" : null)"
+     @onclick:stopPropagation="true" @onkeydown="HandleKeyDown" @onkeydown:stopPropagation="IsOpen">
+    <span>@Label</span>
+    <button class="date-picker-trigger" type="button" autofocus="@Autofocus" aria-haspopup="dialog"
+            aria-expanded="@IsOpen" aria-controls="@PickerId" @onclick="Toggle">
+        <span class="date-picker-trigger-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="15" rx="3"></rect><path d="M7 3.5v4M17 3.5v4M3.5 9.5h17"></path></svg>
+        </span>
+        <strong>@ValueLabel</strong>
+        <span class="date-picker-trigger-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg>
+        </span>
+    </button>
+
+    @if (IsOpen)
+    {
+        <button class="luma-date-picker-dismiss-layer" type="button" tabindex="-1"
+                aria-label="Close date picker" @onclick="Close"></button>
+        <div id="@PickerId" class="date-picker-popover" role="dialog" aria-label="@PickerAriaLabel">
+            <header>
+                <div class="date-picker-heading">
+                    <span>@PickerHeading</span>
+                    <strong>@CalendarMonth.ToString("MMMM yyyy")</strong>
+                </div>
+                <div class="date-picker-navigation">
+                    <button type="button" aria-label="Previous month" disabled="@(!CanNavigatePrevious)" @onclick="PreviousMonth">
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5"></path></svg>
+                    </button>
+                    <button type="button" aria-label="Next month" @onclick="NextMonth">
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg>
+                    </button>
+                </div>
+            </header>
+            <div class="date-picker-weekdays" aria-hidden="true">
+                @foreach (var weekday in Weekdays)
+                {
+                    <span>@weekday</span>
+                }
+            </div>
+            <div class="date-picker-days">
+                @foreach (var day in CalendarDays)
+                {
+                    var unavailable = IsUnavailable(day);
+                    var excluded = IsExcluded(day);
+                    <button type="button"
+                            class="@(day.Month != CalendarMonth.Month ? "outside" : null) @(day == Today ? "today" : null) @(day == Value ? "selected" : null) @(excluded ? "excluded" : null)"
+                            disabled="@unavailable" aria-disabled="@unavailable"
+                            aria-current="@(day == Today ? "date" : null)"
+                            aria-selected="@(day == Value)"
+                            aria-label="@DateLabel(day, unavailable, excluded)" @onclick="() => Select(day)">
+                        <span class="date-picker-day-number">@day.Day</span>
+                        @if (day == Today)
+                        {
+                            <i class="date-picker-today-marker" aria-hidden="true"></i>
+                        }
+                    </button>
+                }
+            </div>
+            <footer>
+                <span class="date-picker-availability"><i></i> Past dates unavailable</span>
+                <button type="button" disabled="@IsTodayUnavailable" @onclick="SelectToday">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle><circle cx="8" cy="8" r="1.5"></circle></svg>
+                    Go to Today
+                </button>
+            </footer>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <small class="field-error">@ErrorMessage</small>
+    }
+</div>
+
+@code {
+    private static readonly string[] Weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+    [Parameter] public string Label { get; set; } = "Date";
+    [Parameter] public string PickerHeading { get; set; } = "Choose date";
+    [Parameter] public string PickerAriaLabel { get; set; } = "Choose date";
+    [Parameter] public string EmptyLabel { get; set; } = "Choose a date";
+    [Parameter] public string? AdditionalClass { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public DateOnly? Value { get; set; }
+    [Parameter] public EventCallback<DateOnly?> ValueChanged { get; set; }
+    [Parameter] public DateOnly? MinimumDate { get; set; }
+    [Parameter] public DateOnly? ExcludedDate { get; set; }
+    [Parameter] public bool OpenUpward { get; set; }
+    [Parameter] public bool Autofocus { get; set; }
+
+    private readonly string PickerId = $"luma-date-picker-{Guid.NewGuid():N}";
+    private DateOnly CalendarMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private bool IsOpen;
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly EffectiveMinimum => MinimumDate ?? Today;
+    private DateOnly MinimumMonth => new(EffectiveMinimum.Year, EffectiveMinimum.Month, 1);
+    private bool CanNavigatePrevious => CalendarMonth > MinimumMonth;
+    private bool IsTodayUnavailable => IsUnavailable(Today);
+    private string ValueLabel => Value?.ToString("ddd, MMM d, yyyy") ?? EmptyLabel;
+
+    private IEnumerable<DateOnly> CalendarDays
+    {
+        get
+        {
+            var first = CalendarMonth.ToDateTime(TimeOnly.MinValue);
+            var start = first.AddDays(-(((int)first.DayOfWeek + 6) % 7));
+            return Enumerable.Range(0, 42).Select(offset => DateOnly.FromDateTime(start.AddDays(offset)));
+        }
+    }
+
+    public void Close() => IsOpen = false;
+
+    private void Toggle()
+    {
+        if (!IsOpen)
+        {
+            var anchor = Value ?? Today;
+            if (anchor < EffectiveMinimum) anchor = EffectiveMinimum;
+            CalendarMonth = new DateOnly(anchor.Year, anchor.Month, 1);
+        }
+        IsOpen = !IsOpen;
+    }
+
+    private async Task Select(DateOnly day)
+    {
+        if (IsUnavailable(day)) return;
+        await ValueChanged.InvokeAsync(day);
+        CalendarMonth = new DateOnly(day.Year, day.Month, 1);
+        IsOpen = false;
+    }
+
+    private Task SelectToday() => IsTodayUnavailable ? Task.CompletedTask : Select(Today);
+    private void PreviousMonth() { if (CanNavigatePrevious) CalendarMonth = CalendarMonth.AddMonths(-1); }
+    private void NextMonth() => CalendarMonth = CalendarMonth.AddMonths(1);
+    private bool IsExcluded(DateOnly day) => ExcludedDate is not null && day == ExcludedDate.Value;
+    private bool IsUnavailable(DateOnly day) => day < EffectiveMinimum || IsExcluded(day);
+    private string DateLabel(DateOnly day, bool unavailable, bool excluded) =>
+        $"{day:dddd, MMMM d, yyyy}{(day == Today ? ", Today" : string.Empty)}{(excluded ? ", current deadline, choose another date" : unavailable ? ", unavailable" : string.Empty)}";
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") Close();
+    }
+}

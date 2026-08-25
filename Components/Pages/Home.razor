@@ -13,6 +13,7 @@
 <div class="calendar-app">
     <aside class="sidebar-panel">
         <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
+        <LumaSectionNav />
         <button class="create-button" @onclick="CreateFromButton"><span>+</span> Create event</button>
         <section class="mini-calendar">
             <header><strong>@MiniDate.ToString("MMMM yyyy")</strong><div><button aria-label="Previous month" @onclick="() => MiniDate = MiniDate.AddMonths(-1)">‹</button><button aria-label="Next month" @onclick="() => MiniDate = MiniDate.AddMonths(1)">›</button></div></header>
@@ -34,8 +35,11 @@
 
     <main class="calendar-main">
         <header class="main-header">
-            <div class="header-primary">
+            <div class="mobile-section-navigation">
                 <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
+                <LumaSectionNav />
+            </div>
+            <div class="header-primary">
                 <button class="today-button" @onclick="GoToday">Today</button>
                 <div class="nav-buttons"><button aria-label="Previous" @onclick="Previous">‹</button><button aria-label="Next" @onclick="Next">›</button></div>
                 <h1>@PeriodLabel</h1>

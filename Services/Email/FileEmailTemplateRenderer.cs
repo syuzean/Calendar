@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace Calendar.Services.Email;
 
-public sealed partial class FileEmailTemplateRenderer(string templateDirectory) : IEmailTemplateRenderer
+public sealed partial class FileEmailTemplateRenderer(string templateDirectory) : IEmailTemplateRenderer, ITaskEmailTemplateRenderer
 {
     public RenderedEmailTemplate RenderEventShared(EventSharedTemplateData data)
     {
@@ -33,6 +33,91 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             string.Empty, string.Empty, string.Empty);
         return RenderTemplate("EventCancelled", values);
     }
+
+    public RenderedEmailTemplate RenderTaskCreated(TaskCreatedTemplateData data) =>
+        RenderTemplate("TaskCreated", TaskValues(
+            data.RecipientName,
+            data.RecipientEmail,
+            data.IntroText,
+            data.TaskTitle,
+            data.Description,
+            data.TaskMaker,
+            data.TaskDoer,
+            data.Deadline,
+            data.TaskUrl,
+            null));
+
+    public RenderedEmailTemplate RenderTaskAccepted(TaskAcceptedTemplateData data) =>
+        RenderTemplate("TaskAccepted", TaskValues(
+            data.RecipientName,
+            data.RecipientEmail,
+            data.IntroText,
+            data.TaskTitle,
+            string.Empty,
+            string.Empty,
+            data.TaskDoer,
+            data.Deadline,
+            data.TaskUrl,
+            data.AcceptedAt));
+
+    public RenderedEmailTemplate RenderTaskDeadlineChangeRequested(TaskDeadlineChangeRequestedTemplateData data) =>
+        RenderTemplate("TaskDeadlineChangeRequested", DeadlineChangeValues(
+            data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
+            data.CurrentDeadline, data.RequestedDeadline, data.Comment, data.RequestedAt, data.TaskUrl));
+
+    public RenderedEmailTemplate RenderTaskDeadlineChangeApproved(TaskDeadlineChangeApprovedTemplateData data) =>
+        RenderTemplate("TaskDeadlineChangeApproved", DeadlineChangeValues(
+            data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
+            data.PreviousDeadline, data.ApprovedDeadline, data.Comment, data.ApprovedAt, data.TaskUrl));
+
+    public RenderedEmailTemplate RenderTaskDeadlineChangeDeclined(TaskDeadlineChangeDeclinedTemplateData data) =>
+        RenderTemplate("TaskDeadlineChangeDeclined", DeadlineChangeValues(
+            data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
+            data.CurrentDeadline, data.DeclinedDeadline, data.Comment, data.DeclinedAt, data.TaskUrl));
+
+    public RenderedEmailTemplate RenderTaskUpdated(TaskUpdatedTemplateData data) =>
+        RenderTemplate("TaskUpdated", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["RecipientName"] = string.IsNullOrWhiteSpace(data.RecipientName) ? data.RecipientEmail : data.RecipientName,
+            ["RecipientEmail"] = data.RecipientEmail,
+            ["TaskTitle"] = data.TaskTitle,
+            ["TaskMaker"] = data.TaskMaker,
+            ["TaskDoer"] = data.TaskDoer,
+            ["Deadline"] = data.Deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+            ["TitleChanged"] = data.TitleChanged ? "true" : string.Empty,
+            ["PreviousTitle"] = data.PreviousTitle,
+            ["UpdatedTitle"] = data.UpdatedTitle,
+            ["DescriptionChanged"] = data.DescriptionChanged ? "true" : string.Empty,
+            ["PreviousDescription"] = DisplayDescription(data.PreviousDescription),
+            ["UpdatedDescription"] = DisplayDescription(data.UpdatedDescription),
+            ["TaskUrl"] = data.TaskUrl
+        });
+
+    public RenderedEmailTemplate RenderTaskWorkStatusChanged(TaskWorkStatusChangedTemplateData data) =>
+        RenderTemplate("TaskStatusChanged", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["RecipientName"] = string.IsNullOrWhiteSpace(data.RecipientName) ? data.RecipientEmail : data.RecipientName,
+            ["RecipientEmail"] = data.RecipientEmail,
+            ["SubjectLabel"] = data.SubjectLabel,
+            ["ActionText"] = data.ActionText,
+            ["TaskTitle"] = data.TaskTitle,
+            ["TaskDoer"] = data.TaskDoer,
+            ["PreviousStatus"] = data.PreviousStatus,
+            ["NewStatus"] = data.NewStatus,
+            ["Deadline"] = data.Deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+            ["TaskUrl"] = data.TaskUrl
+        });
+
+    public RenderedEmailTemplate RenderTaskCommentAdded(TaskCommentAddedTemplateData data) =>
+        RenderTemplate("TaskCommentAdded", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["RecipientName"] = string.IsNullOrWhiteSpace(data.RecipientName) ? data.RecipientEmail : data.RecipientName,
+            ["RecipientEmail"] = data.RecipientEmail,
+            ["TaskTitle"] = data.TaskTitle,
+            ["CommentAuthor"] = data.CommentAuthor,
+            ["CommentText"] = data.CommentText,
+            ["TaskUrl"] = data.TaskUrl
+        });
 
     private RenderedEmailTemplate RenderTemplate(string templateName, IReadOnlyDictionary<string, string> values)
     {
@@ -80,6 +165,57 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         };
     }
 
+    private static Dictionary<string, string> TaskValues(
+        string recipientName,
+        string recipientEmail,
+        string introText,
+        string taskTitle,
+        string description,
+        string taskMaker,
+        string taskDoer,
+        DateOnly deadline,
+        string taskUrl,
+        DateTime? acceptedAt) => new(StringComparer.Ordinal)
+    {
+        ["RecipientName"] = string.IsNullOrWhiteSpace(recipientName) ? recipientEmail : recipientName,
+        ["RecipientEmail"] = recipientEmail,
+        ["IntroText"] = introText,
+        ["TaskTitle"] = taskTitle,
+        ["Description"] = description ?? string.Empty,
+        ["TaskMaker"] = taskMaker,
+        ["TaskDoer"] = taskDoer,
+        ["Deadline"] = deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+        ["TaskUrl"] = taskUrl,
+        ["AcceptedAt"] = acceptedAt?.ToString("MMMM d, yyyy 'at' h:mm tt", CultureInfo.InvariantCulture) ?? string.Empty
+    };
+
+    private static Dictionary<string, string> DeadlineChangeValues(
+        string recipientName,
+        string recipientEmail,
+        string taskTitle,
+        string taskMaker,
+        string taskDoer,
+        DateOnly currentDeadline,
+        DateOnly requestedDeadline,
+        string comment,
+        DateTime actionAt,
+        string taskUrl) => new(StringComparer.Ordinal)
+    {
+        ["RecipientName"] = string.IsNullOrWhiteSpace(recipientName) ? recipientEmail : recipientName,
+        ["RecipientEmail"] = recipientEmail,
+        ["TaskTitle"] = taskTitle,
+        ["TaskMaker"] = taskMaker,
+        ["TaskDoer"] = taskDoer,
+        ["CurrentDeadline"] = currentDeadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+        ["RequestedDeadline"] = requestedDeadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+        ["Comment"] = comment ?? string.Empty,
+        ["ActionAt"] = actionAt.ToString("MMMM d, yyyy 'at' h:mm tt", CultureInfo.InvariantCulture),
+        ["TaskUrl"] = taskUrl
+    };
+
+    private static string DisplayDescription(string value) =>
+        string.IsNullOrWhiteSpace(value) ? "No description" : value;
+
     private static string Render(string template, IReadOnlyDictionary<string, string> values, bool htmlEncode)
     {
         template = ConditionalPattern().Replace(template, match =>
@@ -93,7 +229,7 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
                 throw new InvalidOperationException($"Email template contains an unknown variable: {name}.");
             if (!htmlEncode) return value;
             var encoded = WebUtility.HtmlEncode(value);
-            return name == "Description"
+            return name is "Description" or "Comment" or "CommentText" or "PreviousDescription" or "UpdatedDescription"
                 ? encoded.Replace("\r\n", "<br>").Replace("\n", "<br>")
                 : encoded;
         });

@@ -25,8 +25,22 @@ public sealed class CalendarTimeRulesTests
             End = new DateTime(2026, 8, 21, 18, 0, 0)
         };
 
+        Assert.False(CalendarTimeRules.IsLive(item, item.Start.AddTicks(-1)));
         Assert.True(CalendarTimeRules.IsLive(item, item.Start));
         Assert.True(CalendarTimeRules.IsLive(item, item.Start.AddMinutes(30)));
         Assert.False(CalendarTimeRules.IsLive(item, item.End));
+    }
+
+    [Fact]
+    public void LiveRule_HighlightsEveryActiveOverlappingEventIndependently()
+    {
+        var now = new DateTime(2026, 8, 25, 14, 30, 0);
+        var activeEvents = new[]
+        {
+            new CalendarEvent { Start = now.AddMinutes(-30), End = now.AddMinutes(30) },
+            new CalendarEvent { Start = now.AddMinutes(-15), End = now.AddMinutes(45) }
+        };
+
+        Assert.All(activeEvents, item => Assert.True(CalendarTimeRules.IsLive(item, now)));
     }
 }

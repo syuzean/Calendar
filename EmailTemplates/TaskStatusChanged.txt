@@ -1,0 +1,14 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{ActionText}}
+
+{{TaskTitle}}
+Task Doer: {{TaskDoer}}
+Progress: {{PreviousStatus}} → {{NewStatus}}
+Deadline: {{Deadline}}
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

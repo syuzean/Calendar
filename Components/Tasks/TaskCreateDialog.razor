@@ -1,0 +1,213 @@
+@using System.Security.Claims
+@using global::Calendar.Data
+@using global::Calendar.Services
+@using Microsoft.EntityFrameworkCore
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IDbContextFactory<CalendarDbContext> DbContextFactory
+
+<div class="dialog-backdrop" role="presentation" @onclick="Cancel">
+    <section class="event-dialog task-create-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="task-create-dialog-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <header class="dialog-header">
+            <div>
+                <span class="eyebrow">NEW TASK</span>
+                <h2 id="task-create-dialog-title">Create a task</h2>
+                <p class="task-dialog-intro">Capture the essentials and assign the work.</p>
+            </div>
+            <button class="icon-button" aria-label="Close create task dialog" type="button" @onclick="Cancel">×</button>
+        </header>
+
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true" @onclick="ClosePopovers">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="auth-error">@ErrorMessage</div>
+            }
+            <label class="field title-field">
+                <span>Title</span>
+                <input autofocus placeholder="What needs to be done?" @bind="Title" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(TitleError))
+                {
+                    <small class="field-error">@TitleError</small>
+                }
+            </label>
+
+            <label class="field">
+                <span>Description <em>optional</em></span>
+                <textarea rows="4" placeholder="Add helpful context or notes" @bind="Description"></textarea>
+            </label>
+
+            <div class="task-field-grid">
+                <div class="field task-assignee-field" @onclick:stopPropagation="true">
+                    <span>Assignee</span>
+                    <button class="task-assignee-trigger" type="button" aria-haspopup="listbox"
+                            aria-expanded="@ShowAssigneePicker" aria-controls="task-assignee-options"
+                            @onclick="ToggleAssigneePicker">
+                        <span class="task-assignee-avatar" aria-hidden="true">@SelectedAssigneeInitial</span>
+                        <span class="task-assignee-value">
+                            <strong>@SelectedAssigneeLabel</strong>
+                            <small>@SelectedAssigneeDetail</small>
+                        </span>
+                        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+                    </button>
+                    @if (ShowAssigneePicker)
+                    {
+                        <div id="task-assignee-options" class="task-assignee-menu" role="listbox" aria-label="Choose an assignee">
+                            @if (Assignees.Count == 0)
+                            {
+                                <span class="task-assignee-loading">Loading people…</span>
+                            }
+                            else
+                            {
+                                @foreach (var assignee in Assignees)
+                                {
+                                    <button type="button" role="option" aria-selected="@(assignee.Id == SelectedAssigneeId)"
+                                            class="@(assignee.Id == SelectedAssigneeId ? "selected" : null)"
+                                            @onclick="() => SelectAssignee(assignee.Id)">
+                                        <span class="task-assignee-avatar" aria-hidden="true">@InitialFor(assignee.Name)</span>
+                                        <span>
+                                            <strong>@(assignee.IsCurrentUser ? "Me" : assignee.Name)</strong>
+                                            <small>@(assignee.IsCurrentUser ? assignee.Name : assignee.Email)</small>
+                                        </span>
+                                        @if (assignee.Id == SelectedAssigneeId)
+                                        {
+                                            <i aria-hidden="true">✓</i>
+                                        }
+                                    </button>
+                                }
+                            }
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(AssigneeError))
+                    {
+                        <small class="field-error">@AssigneeError</small>
+                    }
+                </div>
+
+                <LumaDateOnlyPicker @ref="DeadlinePicker" Label="Deadline" PickerHeading="Choose deadline"
+                                    PickerAriaLabel="Choose task deadline" AdditionalClass="task-deadline-field"
+                                    OpenUpward="true" Value="@Deadline" ValueChanged="SetDeadline"
+                                    ErrorMessage="@DeadlineError" />
+            </div>
+
+            <div class="dialog-actions task-dialog-actions">
+                <span class="action-spacer"></span>
+                <button class="secondary-button" type="button" @onclick="Cancel">Cancel</button>
+                <button class="primary-button" type="submit">Create task</button>
+            </div>
+        </form>
+    </section>
+</div>
+
+@code {
+    [Parameter] public EventCallback CancelRequested { get; set; }
+    [Parameter] public EventCallback<CreateLumaTaskRequest> Created { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+
+    private readonly List<AssigneeOption> Assignees = [];
+    private string Title = string.Empty;
+    private string Description = string.Empty;
+    private string TitleError = string.Empty;
+    private string AssigneeError = string.Empty;
+    private string DeadlineError = string.Empty;
+    private Guid? SelectedAssigneeId;
+    private DateOnly? Deadline;
+    private bool ShowAssigneePicker;
+    private LumaDateOnlyPicker? DeadlinePicker;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var currentUserId);
+        var currentUserName = principal.Identity?.Name ?? "Me";
+        var currentUserEmail = principal.FindFirstValue(ClaimTypes.Email) ?? string.Empty;
+
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var users = await db.Users.AsNoTracking()
+            .OrderBy(user => user.Name)
+            .Select(user => new AssigneeOption(user.Id, user.Name, user.Email, false))
+            .ToListAsync();
+
+        var currentUser = users.FirstOrDefault(user =>
+            user.Id == currentUserId ||
+            (!string.IsNullOrWhiteSpace(currentUserEmail) &&
+             string.Equals(user.Email, currentUserEmail, StringComparison.OrdinalIgnoreCase)));
+
+        Assignees.Add(currentUser is null
+            ? new AssigneeOption(currentUserId, currentUserName, currentUserEmail, true)
+            : currentUser with { IsCurrentUser = true });
+        Assignees.AddRange(users
+            .Where(user => currentUser is null || user.Id != currentUser.Id)
+            .OrderBy(user => user.Name));
+        SelectedAssigneeId = Assignees[0].Id;
+    }
+
+    private AssigneeOption? SelectedAssignee => Assignees.FirstOrDefault(user => user.Id == SelectedAssigneeId);
+    private string SelectedAssigneeLabel => SelectedAssignee is null ? "Choose a person" : SelectedAssignee.IsCurrentUser ? "Me" : SelectedAssignee.Name;
+    private string SelectedAssigneeDetail => SelectedAssignee is null ? "Required" : SelectedAssignee.IsCurrentUser ? SelectedAssignee.Name : SelectedAssignee.Email;
+    private string SelectedAssigneeInitial => SelectedAssignee is null ? "?" : InitialFor(SelectedAssignee.Name);
+    private async Task Submit()
+    {
+        TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
+        AssigneeError = SelectedAssignee is null ? "Choose an assignee." : string.Empty;
+        DeadlineError = Deadline is null ? "Choose a deadline." : string.Empty;
+        if (Deadline is not null && Deadline.Value < DateOnly.FromDateTime(DateTime.Today))
+            DeadlineError = "Deadline cannot be before today.";
+
+        if (TitleError.Length > 0 || AssigneeError.Length > 0 || DeadlineError.Length > 0)
+        {
+            return;
+        }
+
+        await Created.InvokeAsync(new CreateLumaTaskRequest(
+            Title.Trim(),
+            Description.Trim(),
+            SelectedAssigneeId!.Value,
+            Deadline));
+    }
+
+    private Task Cancel() => CancelRequested.InvokeAsync();
+
+    private void ToggleAssigneePicker()
+    {
+        ShowAssigneePicker = !ShowAssigneePicker;
+        DeadlinePicker?.Close();
+    }
+
+    private void SelectAssignee(Guid userId)
+    {
+        if (Assignees.All(user => user.Id != userId)) return;
+        SelectedAssigneeId = userId;
+        AssigneeError = string.Empty;
+        ShowAssigneePicker = false;
+    }
+
+    private void SetDeadline(DateOnly? deadline)
+    {
+        Deadline = deadline;
+        DeadlineError = string.Empty;
+    }
+
+    private void ClosePopovers()
+    {
+        ShowAssigneePicker = false;
+        DeadlinePicker?.Close();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key != "Escape") return;
+        if (ShowAssigneePicker)
+        {
+            ClosePopovers();
+            return;
+        }
+
+        await Cancel();
+    }
+
+    private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
+        ? "?"
+        : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+    private sealed record AssigneeOption(Guid Id, string Name, string Email, bool IsCurrentUser);
+}

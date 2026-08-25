@@ -1,0 +1,140 @@
+@using System.ComponentModel.DataAnnotations
+@using global::Calendar.Services
+@inject TaskStore TaskStore
+
+<section class="task-comments" aria-labelledby="task-comments-heading">
+    <header>
+        <div>
+            <span class="comments-eyebrow">CONVERSATION</span>
+            <h3 id="task-comments-heading">Comments <small>@Comments.Count</small></h3>
+        </div>
+    </header>
+
+    @if (IsLoading)
+    {
+        <div class="comments-state" role="status">Loading comments…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(LoadError))
+    {
+        <div class="comments-error" role="alert">@LoadError</div>
+    }
+    else
+    {
+        <div class="comment-list" aria-live="polite">
+            @if (Comments.Count == 0)
+            {
+                <div class="comments-empty">No comments yet. Start the conversation.</div>
+            }
+            else
+            {
+                @foreach (var comment in Comments)
+                {
+                    <article class="task-comment">
+                        <span class="comment-avatar" aria-hidden="true">@InitialFor(comment.AuthorName)</span>
+                        <div>
+                            <header>
+                                <strong>@comment.AuthorName</strong>
+                                <time datetime="@comment.CreatedAt.ToString("O")">@FormatCreatedAt(comment.CreatedAt)</time>
+                            </header>
+                            <p>@comment.Text</p>
+                        </div>
+                    </article>
+                }
+            }
+        </div>
+
+        <form class="comment-composer" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <label for="task-comment-input">Write a comment</label>
+            <textarea id="task-comment-input" rows="3" maxlength="2000"
+                      placeholder="Write a comment…" @bind="CommentText" @bind:event="oninput"></textarea>
+            <div class="comment-composer-footer">
+                <span>@CommentText.Length / 2000</span>
+                <button class="primary-button" type="submit" disabled="@IsSubmitting">
+                    @(IsSubmitting ? "Sending…" : "Send")
+                </button>
+            </div>
+        </form>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(ActionError))
+    {
+        <div class="comments-error" role="alert">@ActionError</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(NoticeMessage))
+    {
+        <div class="comments-notice" role="status">@NoticeMessage</div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid TaskId { get; set; }
+
+    private readonly List<LumaTaskCommentDetails> Comments = [];
+    private Guid LoadedTaskId;
+    private string CommentText = string.Empty;
+    private string LoadError = string.Empty;
+    private string ActionError = string.Empty;
+    private string NoticeMessage = string.Empty;
+    private bool IsLoading;
+    private bool IsSubmitting;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (TaskId == LoadedTaskId) return;
+        LoadedTaskId = TaskId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        LoadError = string.Empty;
+        Comments.Clear();
+        try
+        {
+            Comments.AddRange(await TaskStore.LoadCommentsAsync(TaskId));
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException)
+        {
+            LoadError = exception.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        ActionError = string.Empty;
+        NoticeMessage = string.Empty;
+        IsSubmitting = true;
+        try
+        {
+            var comment = await TaskStore.AddCommentAsync(TaskId, new AddTaskCommentRequest(CommentText));
+            Comments.Add(comment);
+            CommentText = string.Empty;
+            NoticeMessage = TaskStore.LastNotice ?? string.Empty;
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or ValidationException)
+        {
+            ActionError = exception.Message;
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
+        ? "?"
+        : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+    private static string FormatCreatedAt(DateTime createdAt)
+    {
+        var local = createdAt.ToLocalTime();
+        return local.Date == DateTime.Today
+            ? $"Today, {local:h:mm tt}"
+            : local.ToString("MMM d, yyyy · h:mm tt");
+    }
+}

@@ -1,0 +1,219 @@
+@using global::Calendar.Services
+@using global::Calendar.Models
+
+<div class="dialog-backdrop task-details-backdrop" role="presentation" @onclick="Close">
+    <section class="event-dialog task-details-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="task-details-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <header class="dialog-header task-details-header">
+            <div>
+                <span class="eyebrow">TASK DETAILS</span>
+                <h2 id="task-details-title">@(Details?.Title ?? (IsLoading ? "Opening task…" : "Task unavailable"))</h2>
+            </div>
+            <button class="icon-button" aria-label="Close task details" type="button" autofocus @onclick="Close">×</button>
+        </header>
+
+        @if (IsLoading)
+        {
+            <div class="task-details-loading" role="status">
+                <span aria-hidden="true"></span>
+                <strong>Loading task details…</strong>
+            </div>
+        }
+        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+        {
+            <div class="task-details-error" role="alert">
+                <span aria-hidden="true">!</span>
+                <p>@ErrorMessage</p>
+            </div>
+        }
+        else if (Details is not null)
+        {
+            <div class="task-details-content">
+                <section class="task-description" aria-labelledby="task-description-heading">
+                    <span id="task-description-heading">Description</span>
+                    <p class="@(string.IsNullOrWhiteSpace(Details.Description) ? "empty" : null)">
+                        @(string.IsNullOrWhiteSpace(Details.Description) ? "No description provided." : Details.Description)
+                    </p>
+                </section>
+
+                <dl class="task-detail-grid">
+                    <div>
+                        <dt>Created by</dt>
+                        <dd><span class="task-person-mark" aria-hidden="true">@InitialFor(Details.CreatorName)</span>@Details.CreatorName</dd>
+                    </div>
+                    <div>
+                        <dt>Assigned to</dt>
+                        <dd><span class="task-person-mark" aria-hidden="true">@InitialFor(Details.AssigneeName)</span>@Details.AssigneeName</dd>
+                    </div>
+                    <div>
+                        <dt>Deadline</dt>
+                        <dd>@Details.Deadline.ToString("dddd, MMMM d, yyyy")</dd>
+                    </div>
+                    <div>
+                        <dt>Created</dt>
+                        <dd>@Details.CreatedAt.ToLocalTime().ToString("MMMM d, yyyy")</dd>
+                    </div>
+                    <div>
+                        <dt>Assignment status</dt>
+                        <dd><span class="task-detail-status @StatusClass(Details.AssignmentStatus)">@StatusLabel(Details.AssignmentStatus)</span></dd>
+                    </div>
+                    <div>
+                        <dt>Work progress</dt>
+                        <dd><span class="task-detail-status work @WorkStatusClass(Details.WorkStatus)">@WorkStatusLabel(Details.WorkStatus)</span></dd>
+                    </div>
+                </dl>
+
+                @if (Details.AssignmentStatus == TaskAssignmentStatus.DeadlineChangeRequested && Details.RequestedDeadline is not null)
+                {
+                    <section class="task-deadline-request" aria-labelledby="deadline-request-heading">
+                        <div class="task-deadline-request-heading">
+                            <span aria-hidden="true">↗</span>
+                            <div>
+                                <small>AWAITING REVIEW</small>
+                                <h3 id="deadline-request-heading">Deadline change requested</h3>
+                            </div>
+                        </div>
+                        <dl>
+                            <div><dt>Current deadline</dt><dd>@Details.Deadline.ToString("MMM d, yyyy")</dd></div>
+                            <div><dt>Requested deadline</dt><dd>@Details.RequestedDeadline.Value.ToString("MMM d, yyyy")</dd></div>
+                        </dl>
+                        @if (!string.IsNullOrWhiteSpace(Details.DeadlineChangeComment))
+                        {
+                            <blockquote>“@Details.DeadlineChangeComment”</blockquote>
+                        }
+                        @if (Details.DeadlineChangeRequestedAt is not null)
+                        {
+                            <time datetime="@Details.DeadlineChangeRequestedAt.Value.ToString("O")">
+                                Requested @Details.DeadlineChangeRequestedAt.Value.ToLocalTime().ToString("MMM d, h:mm tt")
+                            </time>
+                        }
+                    </section>
+                }
+
+                <TaskCommentsSection TaskId="@Details.Id" />
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(ActionError))
+        {
+            <div class="task-action-error" role="alert">@ActionError</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(NoticeMessage))
+        {
+            <div class="task-action-notice" role="status">@NoticeMessage</div>
+        }
+
+        <div class="dialog-actions task-details-actions">
+            @if (Details?.AssignmentStatus == TaskAssignmentStatus.Accepted)
+            {
+                <span class="task-accepted-state">
+                    <strong>✓ Accepted</strong>
+                    @if (Details.AcceptedAt is not null)
+                    {
+                        <small>@Details.AcceptedAt.Value.ToLocalTime().ToString("MMM d, h:mm tt")</small>
+                    }
+                </span>
+            }
+            else if (Details?.AssignmentStatus == TaskAssignmentStatus.DeadlineChangeRequested && !Details.CanReviewDeadlineChange)
+            {
+                <span class="task-requested-state"><strong>Deadline request pending</strong><small>Waiting for the Task Maker</small></span>
+            }
+            <span class="action-spacer"></span>
+            <button class="secondary-button" type="button" @onclick="Close">Close</button>
+            @if (Details?.CanEdit == true)
+            {
+                <button class="secondary-button" type="button" disabled="@(IsAccepting || IsReviewingDeadline || IsChangingWorkStatus)" @onclick="Edit">
+                    Edit task
+                </button>
+            }
+            @if (Details is { AssignmentStatus: TaskAssignmentStatus.Pending, CanAccept: true })
+            {
+                <button class="secondary-button" type="button" disabled="@IsAccepting" @onclick="RequestDeadlineChange">
+                    Request deadline change
+                </button>
+                <button class="primary-button" type="button" disabled="@IsAccepting" @onclick="Accept">
+                    @(IsAccepting ? "Accepting…" : "Accept task")
+                </button>
+            }
+            else if (Details is { AssignmentStatus: TaskAssignmentStatus.DeadlineChangeRequested, CanReviewDeadlineChange: true })
+            {
+                <button class="secondary-button task-decline-button" type="button" disabled="@IsReviewingDeadline" @onclick="DeclineDeadlineChange">
+                    Decline
+                </button>
+                <button class="primary-button" type="button" disabled="@IsReviewingDeadline" @onclick="ApproveDeadlineChange">
+                    @(IsReviewingDeadline ? "Saving…" : "Approve")
+                </button>
+            }
+            else if (Details is { AssignmentStatus: TaskAssignmentStatus.Accepted, CanManageWorkStatus: true, WorkStatus: TaskWorkStatus.ToDo })
+            {
+                <button class="primary-button" type="button" disabled="@IsChangingWorkStatus" @onclick="StartWork">
+                    @(IsChangingWorkStatus ? "Updating…" : "Start task")
+                </button>
+            }
+            else if (Details is { AssignmentStatus: TaskAssignmentStatus.Accepted, CanManageWorkStatus: true, WorkStatus: TaskWorkStatus.InProgress })
+            {
+                <button class="primary-button" type="button" disabled="@IsChangingWorkStatus" @onclick="CompleteWork">
+                    @(IsChangingWorkStatus ? "Updating…" : "Mark as done")
+                </button>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    [Parameter] public LumaTaskDetails? Details { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public string? ActionError { get; set; }
+    [Parameter] public string? NoticeMessage { get; set; }
+    [Parameter] public bool IsAccepting { get; set; }
+    [Parameter] public bool IsReviewingDeadline { get; set; }
+    [Parameter] public bool IsChangingWorkStatus { get; set; }
+    [Parameter] public EventCallback<Guid> AcceptRequested { get; set; }
+    [Parameter] public EventCallback<Guid> DeadlineChangeRequested { get; set; }
+    [Parameter] public EventCallback<Guid> ApproveDeadlineChangeRequested { get; set; }
+    [Parameter] public EventCallback<Guid> DeclineDeadlineChangeRequested { get; set; }
+    [Parameter] public EventCallback<Guid> EditRequested { get; set; }
+    [Parameter] public EventCallback<TaskWorkStatus> WorkStatusChangeRequested { get; set; }
+    [Parameter] public EventCallback CloseRequested { get; set; }
+
+    private Task Close() => CloseRequested.InvokeAsync();
+    private Task Accept() => Details is null ? Task.CompletedTask : AcceptRequested.InvokeAsync(Details.Id);
+    private Task RequestDeadlineChange() => Details is null ? Task.CompletedTask : DeadlineChangeRequested.InvokeAsync(Details.Id);
+    private Task ApproveDeadlineChange() => Details is null ? Task.CompletedTask : ApproveDeadlineChangeRequested.InvokeAsync(Details.Id);
+    private Task DeclineDeadlineChange() => Details is null ? Task.CompletedTask : DeclineDeadlineChangeRequested.InvokeAsync(Details.Id);
+    private Task Edit() => Details is null ? Task.CompletedTask : EditRequested.InvokeAsync(Details.Id);
+    private Task StartWork() => WorkStatusChangeRequested.InvokeAsync(TaskWorkStatus.InProgress);
+    private Task CompleteWork() => WorkStatusChangeRequested.InvokeAsync(TaskWorkStatus.Done);
+    private Task HandleKeyDown(KeyboardEventArgs args) =>
+        args.Key == "Escape" ? Close() : Task.CompletedTask;
+    private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
+        ? "?"
+        : char.ToUpperInvariant(name.Trim()[0]).ToString();
+    private static string StatusClass(TaskAssignmentStatus status) =>
+        status switch
+        {
+            TaskAssignmentStatus.Accepted => "accepted",
+            TaskAssignmentStatus.DeadlineChangeRequested => "deadline-requested",
+            _ => "pending"
+        };
+    private static string StatusLabel(TaskAssignmentStatus status) =>
+        status switch
+        {
+            TaskAssignmentStatus.Accepted => "Accepted",
+            TaskAssignmentStatus.DeadlineChangeRequested => "Deadline requested",
+            _ => "Pending"
+        };
+    private static string WorkStatusClass(TaskWorkStatus status) => status switch
+    {
+        TaskWorkStatus.InProgress => "in-progress",
+        TaskWorkStatus.Done => "done",
+        _ => "to-do"
+    };
+    private static string WorkStatusLabel(TaskWorkStatus status) => status switch
+    {
+        TaskWorkStatus.InProgress => "In Progress",
+        TaskWorkStatus.Done => "Done",
+        _ => "To Do"
+    };
+}

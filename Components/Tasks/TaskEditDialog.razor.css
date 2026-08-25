@@ -1,0 +1,25 @@
+.task-edit-dialog {
+    width: min(570px, 100%);
+}
+
+.task-edit-dialog .dialog-header p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.task-edit-dialog textarea {
+    min-height: 120px;
+    line-height: 1.55;
+}
+
+.task-edit-dialog button:disabled {
+    cursor: wait;
+    opacity: .62;
+}
+
+@media (max-width: 620px) {
+    .task-edit-dialog {
+        padding: 21px;
+    }
+}

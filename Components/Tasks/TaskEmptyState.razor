@@ -1,0 +1,8 @@
+<div class="task-empty-state">
+    <span aria-hidden="true">✓</span>
+    <p>@Message</p>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Message { get; set; } = string.Empty;
+}

@@ -1,0 +1,36 @@
+.luma-date-only-picker { position: relative; }
+
+.luma-date-picker-dismiss-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: default;
+}
+
+.luma-date-only-picker .date-picker-popover { z-index: 30; }
+
+.luma-date-only-picker.open-upward .date-picker-popover {
+    top: auto;
+    bottom: calc(100% - 9px);
+}
+
+.date-picker-days button.excluded {
+    background: #faf8fc;
+    color: #b7afbe;
+    text-decoration: line-through;
+}
+
+.date-picker-popover > footer button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+@media (max-width: 520px) {
+    .luma-date-only-picker.open-upward .date-picker-popover {
+        top: 50%;
+        bottom: auto;
+    }
+}

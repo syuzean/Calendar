@@ -1,0 +1,35 @@
+.luma-section-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    width: fit-content;
+    padding: 4px;
+    border: 1px solid #e4e0e9;
+    border-radius: 11px;
+    background: #f5f3f7;
+}
+
+.luma-section-nav ::deep a {
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: #817b88;
+    font-size: 10px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+.luma-section-nav ::deep a:hover {
+    color: #5f3bd5;
+}
+
+.luma-section-nav ::deep a.active {
+    background: white;
+    color: #6040ce;
+    box-shadow: 0 2px 7px rgba(52, 39, 78, .1);
+}
+
+.luma-section-nav span {
+    color: #d0cbd5;
+    font-size: 9px;
+}

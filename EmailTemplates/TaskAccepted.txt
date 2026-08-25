@@ -1,0 +1,14 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{IntroText}}
+
+{{TaskTitle}}
+Task Doer: {{TaskDoer}}
+Deadline: {{Deadline}}
+Accepted: {{AcceptedAt}}
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

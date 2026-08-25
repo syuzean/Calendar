@@ -1,0 +1,21 @@
+.task-deadline-request-backdrop { z-index: 115; }
+
+.task-deadline-request-dialog { width: min(470px, 100%); }
+
+.task-deadline-request-dialog .dialog-header p {
+    margin: 7px 0 0;
+    color: #837b8c;
+    font-size: 9px;
+}
+
+.task-deadline-request-dialog .dialog-header p strong { color: #5a4a72; }
+
+.task-deadline-request-dialog textarea {
+    min-height: 92px;
+    line-height: 1.55;
+}
+
+.task-deadline-request-dialog button:disabled {
+    opacity: .6;
+    cursor: wait;
+}

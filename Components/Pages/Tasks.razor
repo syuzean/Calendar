@@ -1,0 +1,526 @@
+@page "/tasks"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject TaskStore TaskStore
+@using global::Calendar.Components.Tasks
+@using global::Calendar.Models
+@using global::Calendar.Services
+
+<PageTitle>Tasks · Luma</PageTitle>
+
+<div class="calendar-app tasks-app">
+    <aside class="sidebar-panel tasks-sidebar">
+        <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
+        <LumaSectionNav />
+        <div class="sidebar-footer">
+            <span class="avatar">@Initials</span>
+            <div><strong>@CurrentUserName</strong><small>Synced with MSSQL</small></div>
+            <form method="post" action="/account/logout">
+                <AntiforgeryToken />
+                <button title="Sign out" aria-label="Sign out">↗</button>
+            </form>
+        </div>
+    </aside>
+
+    <main class="tasks-main">
+        <header class="tasks-header">
+            <div class="tasks-mobile-navigation">
+                <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
+                <LumaSectionNav />
+            </div>
+            <div class="tasks-heading-row">
+                <div>
+                    <span class="eyebrow">WORKSPACE</span>
+                    <h1>Tasks</h1>
+                </div>
+                <button class="primary-button tasks-create-button" type="button" @onclick="OpenCreateTask">
+                    <span aria-hidden="true">+</span>
+                    Create task
+                </button>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrEmpty(FeedbackMessage))
+        {
+            <div class="tasks-feedback" role="status">
+                <span aria-hidden="true">✓</span>
+                <div>
+                    <strong>Task created</strong>
+                    <small>@FeedbackMessage</small>
+                </div>
+                <button type="button" aria-label="Dismiss message" @onclick="DismissFeedback">×</button>
+            </div>
+        }
+
+        <section class="tasks-surface" aria-label="Task lists">
+            <div class="tasks-workspace">
+                <div class="task-tabs" role="tablist" aria-label="Task views">
+                    <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Assigned)"
+                            class="@(ActiveTab == TaskListTab.Assigned ? "active" : null)" @onclick="ShowAssignedTasks">
+                        My Tasks <span>@AssignedTasks.Count</span>
+                    </button>
+                    <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Created)"
+                            class="@(ActiveTab == TaskListTab.Created ? "active" : null)" @onclick="ShowCreatedTasks">
+                        Created by me <span>@CreatedTasks.Count</span>
+                    </button>
+                </div>
+
+                @if (IsLoading)
+                {
+                    <div class="tasks-loading" role="status">
+                        <span aria-hidden="true"></span>
+                        <strong>Loading your tasks…</strong>
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(LoadError))
+                {
+                    <div class="tasks-load-error" role="alert">
+                        <strong>Tasks could not be loaded</strong>
+                        <p>@LoadError</p>
+                    </div>
+                }
+                else if (ActiveTab == TaskListTab.Assigned)
+                {
+                    <div role="tabpanel" class="task-panel" aria-label="My Tasks">
+                        @if (AssignedTasks.Count == 0)
+                        {
+                            <TaskEmptyState Message="No tasks assigned to you yet." />
+                        }
+                        else
+                        {
+                            <div class="task-list">
+                                @foreach (var task in AssignedTasks)
+                                {
+                                    var deadlineClass = DeadlineClass(task.Deadline);
+                                    <button type="button" class="task-list-card @deadlineClass" @onclick="() => OpenTaskAsync(task.Id)">
+                                        <span class="task-card-mark" aria-hidden="true">✓</span>
+                                        <span class="task-card-copy">
+                                            <strong>@task.Title</strong>
+                                            <span class="task-card-meta">
+                                                <small>Created by <b>@task.CreatorName</b></small>
+                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus)">@StatusLabel(task.AssignmentStatus)</span>
+                                                <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
+                                            </span>
+                                        </span>
+                                        <span class="task-card-deadline @deadlineClass">
+                                            <small>Deadline</small>
+                                            <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
+                                        </span>
+                                        <span class="task-card-arrow" aria-hidden="true">›</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div role="tabpanel" class="task-panel" aria-label="Created by me">
+                        @if (CreatedTasks.Count == 0)
+                        {
+                            <TaskEmptyState Message="You haven't created any tasks yet." />
+                        }
+                        else
+                        {
+                            <div class="task-list">
+                                @foreach (var task in CreatedTasks)
+                                {
+                                    var deadlineClass = DeadlineClass(task.Deadline);
+                                    <button type="button" class="task-list-card @deadlineClass" @onclick="() => OpenTaskAsync(task.Id)">
+                                        <span class="task-card-mark created" aria-hidden="true">↗</span>
+                                        <span class="task-card-copy">
+                                            <strong>@task.Title</strong>
+                                            <span class="task-card-meta">
+                                                <small>Assigned to <b>@task.AssigneeName</b></small>
+                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus)">@StatusLabel(task.AssignmentStatus)</span>
+                                                <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
+                                            </span>
+                                        </span>
+                                        <span class="task-card-deadline @deadlineClass">
+                                            <small>Deadline</small>
+                                            <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
+                                        </span>
+                                        <span class="task-card-arrow" aria-hidden="true">›</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    </main>
+</div>
+
+@if (ShowCreateTask)
+{
+    <TaskCreateDialog CancelRequested="CloseCreateTask" Created="HandleTaskCreated" ErrorMessage="@OperationError" />
+}
+
+@if (ShowTaskDetails)
+{
+    <TaskDetailsDialog Details="@SelectedTask" IsLoading="@IsDetailsLoading"
+                       ErrorMessage="@DetailsError" ActionError="@DetailsActionError"
+                       NoticeMessage="@DetailsNotice"
+                       IsAccepting="@IsAcceptingTask" IsReviewingDeadline="@IsReviewingDeadline"
+                       IsChangingWorkStatus="@IsChangingWorkStatus"
+                       AcceptRequested="AcceptTaskAsync" DeadlineChangeRequested="OpenDeadlineRequest"
+                       ApproveDeadlineChangeRequested="ApproveDeadlineChangeAsync"
+                       DeclineDeadlineChangeRequested="DeclineDeadlineChangeAsync"
+                       EditRequested="OpenTaskEdit"
+                       WorkStatusChangeRequested="ChangeWorkStatusAsync"
+                       CloseRequested="CloseTaskDetails" />
+}
+
+@if (ShowTaskEdit && SelectedTask is not null)
+{
+    <TaskEditDialog Details="@SelectedTask" IsSubmitting="@IsSavingTaskEdit" ErrorMessage="@TaskEditError"
+                    CancelRequested="CloseTaskEdit" SubmitRequested="SaveTaskEditAsync" />
+}
+
+@if (ShowDeadlineRequest && SelectedTask is not null)
+{
+    <TaskDeadlineRequestDialog TaskId="@SelectedTask.Id" CurrentDeadline="@SelectedTask.Deadline"
+                               ErrorMessage="@DeadlineRequestError" IsSubmitting="@IsSubmittingDeadlineRequest"
+                               CancelRequested="CloseDeadlineRequest" SubmitRequested="SubmitDeadlineRequestAsync" />
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "task")] public Guid? LinkedTaskId { get; set; }
+
+    private string CurrentUserName = "User";
+    private string FeedbackMessage = string.Empty;
+    private string OperationError = string.Empty;
+    private string LoadError = string.Empty;
+    private string DetailsError = string.Empty;
+    private string DetailsActionError = string.Empty;
+    private string DetailsNotice = string.Empty;
+    private string DeadlineRequestError = string.Empty;
+    private bool ShowCreateTask;
+    private bool ShowTaskDetails;
+    private bool IsLoading = true;
+    private bool IsDetailsLoading;
+    private bool IsAcceptingTask;
+    private bool ShowDeadlineRequest;
+    private bool IsSubmittingDeadlineRequest;
+    private bool IsReviewingDeadline;
+    private bool ShowTaskEdit;
+    private bool IsSavingTaskEdit;
+    private bool IsChangingWorkStatus;
+    private string TaskEditError = string.Empty;
+    private TaskListTab ActiveTab = TaskListTab.Assigned;
+    private IReadOnlyList<AssignedLumaTask> AssignedTasks = [];
+    private IReadOnlyList<CreatedLumaTask> CreatedTasks = [];
+    private LumaTaskDetails? SelectedTask;
+
+    private string Initials
+    {
+        get
+        {
+            var initials = string.Concat(CurrentUserName
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Take(2)
+                .Select(part => char.ToUpperInvariant(part[0])));
+            return string.IsNullOrEmpty(initials) ? "U" : initials;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        CurrentUserName = principal.Identity?.Name ?? "User";
+        await LoadTasksAsync();
+        if (LinkedTaskId is not null)
+            await OpenTaskAsync(LinkedTaskId.Value);
+    }
+
+    private void OpenCreateTask()
+    {
+        FeedbackMessage = string.Empty;
+        OperationError = string.Empty;
+        ShowCreateTask = true;
+    }
+
+    private void CloseCreateTask() => ShowCreateTask = false;
+
+    private async Task HandleTaskCreated(CreateLumaTaskRequest request)
+    {
+        OperationError = string.Empty;
+        try
+        {
+            await TaskStore.CreateAsync(request);
+            ShowCreateTask = false;
+            FeedbackMessage = TaskStore.LastNotice ?? $"“{request.Title}” was saved successfully.";
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or UnauthorizedAccessException)
+        {
+            OperationError = exception.Message;
+        }
+    }
+
+    private void DismissFeedback() => FeedbackMessage = string.Empty;
+
+    private async Task LoadTasksAsync()
+    {
+        IsLoading = true;
+        LoadError = string.Empty;
+        try
+        {
+            var assigned = TaskStore.LoadAssignedAsync();
+            var created = TaskStore.LoadCreatedAsync();
+            await Task.WhenAll(assigned, created);
+            AssignedTasks = await assigned;
+            CreatedTasks = await created;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            LoadError = exception.Message;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ShowAssignedTasks() => ActiveTab = TaskListTab.Assigned;
+    private void ShowCreatedTasks() => ActiveTab = TaskListTab.Created;
+
+    private async Task OpenTaskAsync(Guid taskId)
+    {
+        SelectedTask = null;
+        DetailsError = string.Empty;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        ShowDeadlineRequest = false;
+        ShowTaskEdit = false;
+        DeadlineRequestError = string.Empty;
+        IsDetailsLoading = true;
+        ShowTaskDetails = true;
+        StateHasChanged();
+
+        try
+        {
+            SelectedTask = await TaskStore.LoadDetailsAsync(taskId);
+        }
+        catch (LumaTaskNotFoundException exception)
+        {
+            DetailsError = exception.Message;
+            await LoadTasksAsync();
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            DetailsError = exception.Message;
+        }
+        finally
+        {
+            IsDetailsLoading = false;
+        }
+    }
+
+    private void CloseTaskDetails()
+    {
+        ShowTaskDetails = false;
+        SelectedTask = null;
+        DetailsError = string.Empty;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        ShowTaskEdit = false;
+        TaskEditError = string.Empty;
+    }
+
+    private async Task AcceptTaskAsync(Guid taskId)
+    {
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        IsAcceptingTask = true;
+        try
+        {
+            SelectedTask = await TaskStore.AcceptAsync(taskId);
+            DetailsNotice = TaskStore.LastNotice ?? string.Empty;
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            DetailsActionError = exception.Message;
+        }
+        finally
+        {
+            IsAcceptingTask = false;
+        }
+    }
+
+    private void OpenDeadlineRequest(Guid taskId)
+    {
+        if (SelectedTask?.Id != taskId) return;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        DeadlineRequestError = string.Empty;
+        ShowDeadlineRequest = true;
+    }
+
+    private void CloseDeadlineRequest()
+    {
+        ShowDeadlineRequest = false;
+        DeadlineRequestError = string.Empty;
+    }
+
+    private async Task SubmitDeadlineRequestAsync(RequestTaskDeadlineChange request)
+    {
+        if (SelectedTask is null) return;
+        DeadlineRequestError = string.Empty;
+        IsSubmittingDeadlineRequest = true;
+        try
+        {
+            SelectedTask = await TaskStore.RequestDeadlineChangeAsync(SelectedTask.Id, request);
+            ShowDeadlineRequest = false;
+            DetailsNotice = TaskStore.LastNotice ?? "Deadline change requested. The Task Maker can now review it.";
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            DeadlineRequestError = exception.Message;
+        }
+        finally
+        {
+            IsSubmittingDeadlineRequest = false;
+        }
+    }
+
+    private Task ApproveDeadlineChangeAsync(Guid taskId) => ReviewDeadlineChangeAsync(taskId, approve: true);
+    private Task DeclineDeadlineChangeAsync(Guid taskId) => ReviewDeadlineChangeAsync(taskId, approve: false);
+
+    private void OpenTaskEdit(Guid taskId)
+    {
+        if (SelectedTask?.Id != taskId || !SelectedTask.CanEdit) return;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        TaskEditError = string.Empty;
+        ShowTaskEdit = true;
+    }
+
+    private void CloseTaskEdit()
+    {
+        ShowTaskEdit = false;
+        TaskEditError = string.Empty;
+    }
+
+    private async Task SaveTaskEditAsync(UpdateLumaTaskContentRequest request)
+    {
+        if (SelectedTask is null) return;
+        TaskEditError = string.Empty;
+        IsSavingTaskEdit = true;
+        try
+        {
+            SelectedTask = await TaskStore.UpdateContentAsync(SelectedTask.Id, request);
+            ShowTaskEdit = false;
+            DetailsNotice = TaskStore.LastNotice ?? "Task details updated.";
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            TaskEditError = exception.Message;
+        }
+        finally
+        {
+            IsSavingTaskEdit = false;
+        }
+    }
+
+    private async Task ChangeWorkStatusAsync(TaskWorkStatus status)
+    {
+        if (SelectedTask is null) return;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        IsChangingWorkStatus = true;
+        try
+        {
+            SelectedTask = await TaskStore.ChangeWorkStatusAsync(
+                SelectedTask.Id,
+                new ChangeTaskWorkStatusRequest(status, SelectedTask.Version));
+            DetailsNotice = TaskStore.LastNotice ?? $"Task progress changed to {WorkStatusLabel(status)}.";
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            DetailsActionError = exception.Message;
+        }
+        finally
+        {
+            IsChangingWorkStatus = false;
+        }
+    }
+
+    private async Task ReviewDeadlineChangeAsync(Guid taskId, bool approve)
+    {
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        IsReviewingDeadline = true;
+        try
+        {
+            SelectedTask = approve
+                ? await TaskStore.ApproveDeadlineChangeAsync(taskId)
+                : await TaskStore.DeclineDeadlineChangeAsync(taskId);
+            DetailsNotice = TaskStore.LastNotice ?? (approve
+                ? "Deadline change approved. The assignment is now accepted."
+                : "Deadline change declined. The assignment is pending again.");
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            DetailsActionError = exception.Message;
+        }
+        finally
+        {
+            IsReviewingDeadline = false;
+        }
+    }
+
+    private static string FormatDeadline(DateOnly deadline)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (deadline == today) return "Today";
+        if (deadline < today) return $"Overdue · {deadline:MMM d, yyyy}";
+        return deadline.ToString("MMM d, yyyy");
+    }
+
+    private static string DeadlineClass(DateOnly deadline)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (deadline < today) return "overdue";
+        return deadline == today ? "due-today" : string.Empty;
+    }
+
+    private static string StatusClass(TaskAssignmentStatus status) =>
+        status switch
+        {
+            TaskAssignmentStatus.Accepted => "accepted",
+            TaskAssignmentStatus.DeadlineChangeRequested => "deadline-requested",
+            _ => "pending"
+        };
+
+    private static string StatusLabel(TaskAssignmentStatus status) =>
+        status switch
+        {
+            TaskAssignmentStatus.Accepted => "Accepted",
+            TaskAssignmentStatus.DeadlineChangeRequested => "Deadline requested",
+            _ => "Pending"
+        };
+
+    private static string WorkStatusClass(TaskWorkStatus status) => status switch
+    {
+        TaskWorkStatus.InProgress => "in-progress",
+        TaskWorkStatus.Done => "done",
+        _ => "to-do"
+    };
+
+    private static string WorkStatusLabel(TaskWorkStatus status) => status switch
+    {
+        TaskWorkStatus.InProgress => "In Progress",
+        TaskWorkStatus.Done => "Done",
+        _ => "To Do"
+    };
+
+    private enum TaskListTab { Assigned, Created }
+}

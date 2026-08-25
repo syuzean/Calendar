@@ -1,0 +1,26 @@
+.sidebar-panel ::deep .luma-section-nav {
+    margin-top: 22px;
+}
+
+.mobile-section-navigation {
+    display: none;
+}
+
+@media (max-width: 900px) {
+    .main-header {
+        min-height: 146px;
+    }
+
+    .mobile-section-navigation {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+    }
+
+    .mobile-section-navigation .mobile-brand {
+        display: flex;
+        margin: 0;
+    }
+}

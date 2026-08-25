@@ -4,6 +4,7 @@ using Calendar.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Calendar.Data.Migrations
 {
     [DbContext(typeof(CalendarDbContext))]
-    partial class CalendarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825095259_AddLumaTasks")]
+    partial class AddLumaTasks
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -217,14 +220,8 @@ namespace Calendar.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateTime?>("AcceptedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<Guid>("AssigneeId")
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("AssignmentStatus")
-                        .HasColumnType("int");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -235,32 +232,15 @@ namespace Calendar.Data.Migrations
                     b.Property<DateOnly>("Deadline")
                         .HasColumnType("date");
 
-                    b.Property<string>("DeadlineChangeComment")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTime?>("DeadlineChangeRequestedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
-                    b.Property<DateOnly?>("RequestedDeadline")
-                        .HasColumnType("date");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(180)
                         .HasColumnType("nvarchar(180)");
-
-                    b.Property<Guid>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("WorkStatus")
-                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -268,41 +248,7 @@ namespace Calendar.Data.Migrations
 
                     b.HasIndex("CreatorId");
 
-                    b.ToTable("Tasks", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_Tasks_AssignmentStatus", "[AssignmentStatus] IN (0, 1, 2)");
-
-                            t.HasCheckConstraint("CK_Tasks_WorkStatus", "[WorkStatus] IN (0, 1, 2)");
-                        });
-                });
-
-            modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("AuthorUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Text")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AuthorUserId");
-
-                    b.HasIndex("TaskId", "CreatedAt");
-
-                    b.ToTable("TaskComments", (string)null);
+                    b.ToTable("Tasks");
                 });
 
             modelBuilder.Entity("Calendar.Models.CalendarEvent", b =>
@@ -372,25 +318,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Creator");
                 });
 
-            modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>
-                {
-                    b.HasOne("Calendar.Models.AppUser", "Author")
-                        .WithMany("TaskComments")
-                        .HasForeignKey("AuthorUserId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("Calendar.Models.LumaTask", "Task")
-                        .WithMany("Comments")
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Author");
-
-                    b.Navigation("Task");
-                });
-
             modelBuilder.Entity("Calendar.Models.AppUser", b =>
                 {
                     b.Navigation("AssignedTasks");
@@ -402,8 +329,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("OwnedEvents");
 
                     b.Navigation("Participations");
-
-                    b.Navigation("TaskComments");
                 });
 
             modelBuilder.Entity("Calendar.Models.CalendarEvent", b =>
@@ -411,11 +336,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Invitations");
 
                     b.Navigation("Participants");
-                });
-
-            modelBuilder.Entity("Calendar.Models.LumaTask", b =>
-                {
-                    b.Navigation("Comments");
                 });
 #pragma warning restore 612, 618
         }

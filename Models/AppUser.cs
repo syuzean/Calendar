@@ -11,4 +11,7 @@ public sealed class AppUser
     public ICollection<CalendarEvent> OwnedEvents { get; set; } = [];
     public ICollection<EventParticipant> Participations { get; set; } = [];
     public ICollection<EventInvitation> ClaimedInvitations { get; set; } = [];
+    public ICollection<LumaTask> CreatedTasks { get; set; } = [];
+    public ICollection<LumaTask> AssignedTasks { get; set; } = [];
+    public ICollection<LumaTaskComment> TaskComments { get; set; } = [];
 }

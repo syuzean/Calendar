@@ -1,0 +1,67 @@
+@using global::Calendar.Services
+
+<div class="dialog-backdrop" role="presentation" @onclick="Cancel">
+    <section class="event-dialog task-edit-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="task-edit-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <header class="dialog-header">
+            <div>
+                <span class="eyebrow">EDIT TASK</span>
+                <h2 id="task-edit-title">Update task details</h2>
+                <p>Only the title and description can be changed here.</p>
+            </div>
+            <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
+        </header>
+
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="auth-error" role="alert">@ErrorMessage</div>
+            }
+            <label class="field">
+                <span>Title</span>
+                <input autofocus maxlength="180" @bind="Title" @bind:event="oninput" />
+                @if (!string.IsNullOrWhiteSpace(TitleError))
+                {
+                    <small class="field-error">@TitleError</small>
+                }
+            </label>
+            <label class="field">
+                <span>Description <em>optional</em></span>
+                <textarea rows="5" maxlength="4000" @bind="Description"></textarea>
+            </label>
+            <div class="dialog-actions">
+                <span class="action-spacer"></span>
+                <button class="secondary-button" type="button" disabled="@IsSubmitting" @onclick="Cancel">Cancel</button>
+                <button class="primary-button" type="submit" disabled="@IsSubmitting">@(IsSubmitting ? "Saving…" : "Save changes")</button>
+            </div>
+        </form>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public LumaTaskDetails Details { get; set; } = default!;
+    [Parameter] public bool IsSubmitting { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public EventCallback CancelRequested { get; set; }
+    [Parameter] public EventCallback<UpdateLumaTaskContentRequest> SubmitRequested { get; set; }
+
+    private string Title = string.Empty;
+    private string Description = string.Empty;
+    private string TitleError = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        Title = Details.Title;
+        Description = Details.Description;
+    }
+
+    private async Task Submit()
+    {
+        TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
+        if (TitleError.Length > 0) return;
+        await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(Title.Trim(), Description.Trim(), Details.Version));
+    }
+
+    private Task Cancel() => CancelRequested.InvokeAsync();
+    private Task HandleKeyDown(KeyboardEventArgs args) => args.Key == "Escape" ? Cancel() : Task.CompletedTask;
+}

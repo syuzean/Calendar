@@ -4,6 +4,7 @@ using Calendar.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Calendar.Data.Migrations
 {
     [DbContext(typeof(CalendarDbContext))]
-    partial class CalendarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825122219_AddTaskWorkStatus")]
+    partial class AddTaskWorkStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -276,35 +279,6 @@ namespace Calendar.Data.Migrations
                         });
                 });
 
-            modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("AuthorUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Text")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AuthorUserId");
-
-                    b.HasIndex("TaskId", "CreatedAt");
-
-                    b.ToTable("TaskComments", (string)null);
-                });
-
             modelBuilder.Entity("Calendar.Models.CalendarEvent", b =>
                 {
                     b.HasOne("Calendar.Models.AppUser", "Owner")
@@ -372,25 +346,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Creator");
                 });
 
-            modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>
-                {
-                    b.HasOne("Calendar.Models.AppUser", "Author")
-                        .WithMany("TaskComments")
-                        .HasForeignKey("AuthorUserId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("Calendar.Models.LumaTask", "Task")
-                        .WithMany("Comments")
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Author");
-
-                    b.Navigation("Task");
-                });
-
             modelBuilder.Entity("Calendar.Models.AppUser", b =>
                 {
                     b.Navigation("AssignedTasks");
@@ -402,8 +357,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("OwnedEvents");
 
                     b.Navigation("Participations");
-
-                    b.Navigation("TaskComments");
                 });
 
             modelBuilder.Entity("Calendar.Models.CalendarEvent", b =>
@@ -411,11 +364,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Invitations");
 
                     b.Navigation("Participants");
-                });
-
-            modelBuilder.Entity("Calendar.Models.LumaTask", b =>
-                {
-                    b.Navigation("Comments");
                 });
 #pragma warning restore 612, 618
         }

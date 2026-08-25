@@ -1,0 +1,11 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{CommentAuthor}} added a comment to "{{TaskTitle}}".
+
+{{CommentText}}
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

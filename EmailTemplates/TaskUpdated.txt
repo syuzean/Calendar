@@ -1,0 +1,24 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{TaskMaker}} updated a task assigned to you.
+
+{{TaskTitle}}
+Deadline: {{Deadline}}
+
+Changes
+{{#TitleChanged}}
+Title
+{{PreviousTitle}}
+→ {{UpdatedTitle}}
+{{/TitleChanged}}
+{{#DescriptionChanged}}
+Description
+{{PreviousDescription}}
+→ {{UpdatedDescription}}
+{{/DescriptionChanged}}
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

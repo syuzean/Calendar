@@ -1,0 +1,205 @@
+.task-create-dialog {
+    width: min(650px, 100%);
+    overflow: visible;
+}
+
+.task-dialog-intro {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.task-create-dialog textarea {
+    min-height: 92px;
+    line-height: 1.55;
+}
+
+.task-field-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 14px;
+}
+
+.task-assignee-field,
+.task-deadline-field {
+    position: relative;
+}
+
+.task-assignee-trigger {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 43px;
+    border: 1px solid #ddd8e5;
+    border-radius: 11px;
+    background: #fff;
+    padding: 5px 9px 5px 6px;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(35, 28, 46, .03);
+    transition: border-color .15s, box-shadow .15s, background .15s;
+}
+
+.task-assignee-trigger:hover {
+    border-color: #bfb4dc;
+    background: #fdfcff;
+    box-shadow: 0 3px 10px rgba(60, 43, 100, .07);
+}
+
+.task-assignee-trigger[aria-expanded="true"] {
+    border-color: #9379e9;
+    box-shadow: 0 0 0 3px rgba(111, 75, 242, .11);
+}
+
+.task-assignee-avatar {
+    display: grid;
+    place-items: center;
+    flex: 0 0 31px;
+    width: 31px;
+    height: 31px;
+    border-radius: 9px;
+    background: linear-gradient(145deg, #eee9ff, #e6dfff);
+    color: #6844dc;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.task-assignee-value {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.task-assignee-value strong,
+.task-assignee-menu strong {
+    overflow: hidden;
+    color: #302b37;
+    font-size: 11px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-assignee-value small,
+.task-assignee-menu small {
+    overflow: hidden;
+    color: #99929f;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-assignee-trigger > svg {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    fill: none;
+    stroke: #8f8898;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform .15s;
+}
+
+.task-assignee-trigger[aria-expanded="true"] > svg {
+    transform: rotate(180deg);
+}
+
+.task-assignee-menu {
+    position: absolute;
+    top: calc(100% - 9px);
+    left: 0;
+    z-index: 31;
+    width: 100%;
+    max-height: 224px;
+    overflow-y: auto;
+    border: 1px solid #ddd7e5;
+    border-radius: 13px;
+    background: #fff;
+    padding: 6px;
+    box-shadow: 0 18px 42px rgba(35, 25, 51, .18);
+    animation: task-picker-rise .16s ease-out;
+}
+
+.task-assignee-menu button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    padding: 7px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.task-assignee-menu button:hover,
+.task-assignee-menu button.selected {
+    background: #f2eeff;
+}
+
+.task-assignee-menu button > span:nth-child(2) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.task-assignee-menu button i {
+    color: #6844dc;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 800;
+}
+
+.task-assignee-loading {
+    display: block;
+    padding: 12px;
+    color: var(--muted);
+    font-size: 9px;
+    text-align: center;
+}
+
+.task-date-hint {
+    color: #9a94a0;
+    font-size: 7.5px;
+}
+
+.task-dialog-actions {
+    margin-top: 5px;
+}
+
+.task-prototype-note {
+    color: #9c95a2;
+    font-size: 8px;
+}
+
+@keyframes task-picker-rise {
+    from { opacity: 0; transform: translateY(-5px) scale(.985); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 680px) {
+    .task-create-dialog {
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
+        padding: 21px;
+    }
+
+    .task-field-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    .task-dialog-actions {
+        flex-wrap: wrap;
+    }
+
+    .task-prototype-note {
+        width: 100%;
+    }
+}

@@ -1,0 +1,19 @@
+LUMA TASKS
+
+Hi {{RecipientName}},
+
+{{TaskMaker}} declined your deadline-change request.
+
+{{TaskTitle}}
+Current deadline: {{CurrentDeadline}}
+Requested deadline: {{RequestedDeadline}}
+{{#Comment}}
+Your comment: {{Comment}}
+{{/Comment}}
+Reviewed: {{ActionAt}}
+
+The assignment is pending. You can accept the current deadline or request another one.
+
+Open task in LUMA: {{TaskUrl}}
+
+This task notification was sent to {{RecipientEmail}}.

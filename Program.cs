@@ -45,11 +45,16 @@ namespace Calendar
             builder.Services.Configure<EmailLinkOptions>(builder.Configuration.GetSection(EmailLinkOptions.SectionName));
             builder.Services.AddSingleton<IEventLinkBuilder, EventLinkBuilder>();
             builder.Services.AddSingleton<IInvitationAccessTokenService, InvitationAccessTokenService>();
-            builder.Services.AddSingleton<IEmailTemplateRenderer>(_ =>
+            builder.Services.AddSingleton(_ =>
                 new FileEmailTemplateRenderer(Path.Combine(builder.Environment.ContentRootPath, "EmailTemplates")));
+            builder.Services.AddSingleton<IEmailTemplateRenderer>(provider => provider.GetRequiredService<FileEmailTemplateRenderer>());
+            builder.Services.AddSingleton<ITaskEmailTemplateRenderer>(provider => provider.GetRequiredService<FileEmailTemplateRenderer>());
             builder.Services.AddSingleton<IEventShareNotifier, EventShareNotifier>();
+            builder.Services.AddSingleton<ITaskNotifier, TaskEmailNotifier>();
+            builder.Services.AddSingleton<ITaskLinkBuilder, TaskLinkBuilder>();
             builder.Services.AddScoped<IEventInvitationService, EventInvitationService>();
             builder.Services.AddScoped<CalendarStore>();
+            builder.Services.AddScoped<TaskStore>();
 
             var app = builder.Build();
 

@@ -1,0 +1,82 @@
+@using global::Calendar.Services
+
+<div class="dialog-backdrop task-deadline-request-backdrop" role="presentation" @onclick="Cancel">
+    <section class="event-dialog task-deadline-request-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="deadline-request-dialog-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <header class="dialog-header">
+            <div>
+                <span class="eyebrow">DEADLINE REQUEST</span>
+                <h2 id="deadline-request-dialog-title">Request a new deadline</h2>
+                <p>The current deadline is <strong>@CurrentDeadline.ToString("MMM d, yyyy")</strong>.</p>
+            </div>
+            <button class="icon-button" aria-label="Close deadline request" type="button" @onclick="Cancel">×</button>
+        </header>
+
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="auth-error">@ErrorMessage</div>
+            }
+            <LumaDateOnlyPicker Label="Proposed deadline" PickerHeading="Choose proposed deadline"
+                                PickerAriaLabel="Choose proposed task deadline" Autofocus="true"
+                                Value="@ProposedDeadline" ValueChanged="SetProposedDeadline"
+                                MinimumDate="@Today" ExcludedDate="@CurrentDeadline"
+                                ErrorMessage="@DateError" />
+            <label class="field">
+                <span>Comment <em>optional</em></span>
+                <textarea rows="4" maxlength="1000" placeholder="Explain why another date would help" @bind="Comment"></textarea>
+            </label>
+            <div class="dialog-actions">
+                <span class="action-spacer"></span>
+                <button class="secondary-button" type="button" disabled="@IsSubmitting" @onclick="Cancel">Cancel</button>
+                <button class="primary-button" type="submit" disabled="@IsSubmitting">
+                    @(IsSubmitting ? "Sending…" : "Send request")
+                </button>
+            </div>
+        </form>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid TaskId { get; set; }
+    [Parameter, EditorRequired] public DateOnly CurrentDeadline { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public bool IsSubmitting { get; set; }
+    [Parameter] public EventCallback CancelRequested { get; set; }
+    [Parameter] public EventCallback<RequestTaskDeadlineChange> SubmitRequested { get; set; }
+
+    private DateOnly? ProposedDeadline;
+    private string Comment = string.Empty;
+    private string DateError = string.Empty;
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    protected override void OnInitialized()
+    {
+        var suggested = CurrentDeadline.AddDays(1);
+        ProposedDeadline = suggested < Today ? Today : suggested;
+    }
+
+    private async Task Submit()
+    {
+        DateError = string.Empty;
+        if (ProposedDeadline is null)
+            DateError = "Choose a proposed deadline.";
+        else if (ProposedDeadline.Value < Today)
+            DateError = "The proposed deadline cannot be before today.";
+        else if (ProposedDeadline.Value == CurrentDeadline)
+            DateError = "Choose a date different from the current deadline.";
+
+        if (DateError.Length > 0) return;
+        await SubmitRequested.InvokeAsync(new RequestTaskDeadlineChange(
+            ProposedDeadline, Comment.Trim()));
+    }
+
+    private void SetProposedDeadline(DateOnly? deadline)
+    {
+        ProposedDeadline = deadline;
+        DateError = string.Empty;
+    }
+
+    private Task Cancel() => CancelRequested.InvokeAsync();
+    private Task HandleKeyDown(KeyboardEventArgs args) => args.Key == "Escape" ? Cancel() : Task.CompletedTask;
+}

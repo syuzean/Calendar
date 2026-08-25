@@ -10,6 +10,8 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<CalendarEvent> Events => Set<CalendarEvent>();
     public DbSet<EventParticipant> EventParticipants => Set<EventParticipant>();
     public DbSet<EventInvitation> EventInvitations => Set<EventInvitation>();
+    public DbSet<LumaTask> Tasks => Set<LumaTask>();
+    public DbSet<LumaTaskComment> TaskComments => Set<LumaTaskComment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -70,6 +72,44 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(invitation => invitation.ClaimedByUser)
                 .WithMany(user => user.ClaimedInvitations)
                 .HasForeignKey(invitation => invitation.ClaimedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LumaTask>(entity =>
+        {
+            entity.Property(task => task.Title).HasMaxLength(180);
+            entity.Property(task => task.Description).HasMaxLength(4000);
+            entity.Property(task => task.DeadlineChangeComment).HasMaxLength(1000);
+            entity.Property(task => task.Deadline).HasColumnType("date");
+            entity.Property(task => task.RequestedDeadline).HasColumnType("date");
+            entity.Property(task => task.Version).IsConcurrencyToken();
+            entity.ToTable("Tasks", table =>
+            {
+                table.HasCheckConstraint("CK_Tasks_AssignmentStatus", "[AssignmentStatus] IN (0, 1, 2)");
+                table.HasCheckConstraint("CK_Tasks_WorkStatus", "[WorkStatus] IN (0, 1, 2)");
+            });
+            entity.HasOne(task => task.Creator)
+                .WithMany(user => user.CreatedTasks)
+                .HasForeignKey(task => task.CreatorId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(task => task.Assignee)
+                .WithMany(user => user.AssignedTasks)
+                .HasForeignKey(task => task.AssigneeId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LumaTaskComment>(entity =>
+        {
+            entity.ToTable("TaskComments");
+            entity.Property(comment => comment.Text).HasMaxLength(2000);
+            entity.HasIndex(comment => new { comment.TaskId, comment.CreatedAt });
+            entity.HasOne(comment => comment.Task)
+                .WithMany(task => task.Comments)
+                .HasForeignKey(comment => comment.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(comment => comment.Author)
+                .WithMany(user => user.TaskComments)
+                .HasForeignKey(comment => comment.AuthorUserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
     }
