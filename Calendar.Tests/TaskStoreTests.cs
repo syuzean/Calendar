@@ -856,13 +856,15 @@ public sealed class TaskStoreTests
         var requested = await fixture.CreateStore(fixture.Assignee).RequestDeadlineChangeAsync(taskId, NewDeadlineRequest());
         var store = fixture.CreateStore(fixture.Creator);
 
-        var updated = await store.UpdateContentAsync(taskId, new("Revised title", requested.Description, requested.Version));
+        var updated = await store.UpdateContentAsync(taskId, new(
+            "Revised title", requested.Description, requested.Version, TaskPriority.High));
 
         Assert.Equal(TaskAssignmentStatus.DeadlineChangeRequested, updated.AssignmentStatus);
         Assert.Equal(requested.RequestedDeadline, updated.RequestedDeadline);
         Assert.Equal(requested.DeadlineChangeComment, updated.DeadlineChangeComment);
         Assert.Equal(requested.DeadlineChangeRequestedAt, updated.DeadlineChangeRequestedAt);
         Assert.Equal(requested.Deadline, updated.Deadline);
+        Assert.Equal(TaskPriority.High, updated.Priority);
     }
 
     [Fact]
@@ -1137,6 +1139,274 @@ public sealed class TaskStoreTests
         Assert.Equal(comment.Id, (await db.TaskComments.SingleAsync()).Id);
     }
 
+    [Fact]
+    public async Task NewTask_DefaultsToNoPriority()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(TaskPriority.None, (await db.Tasks.SingleAsync()).Priority);
+    }
+
+    [Fact]
+    public async Task Maker_CanCreateTaskWithPriority()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { Priority = TaskPriority.High });
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(TaskPriority.High, (await db.Tasks.SingleAsync()).Priority);
+    }
+
+    [Fact]
+    public async Task Maker_CanChangePriorityAndPreserveAssignmentAndWorkStatus()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+        var doerStore = fixture.CreateStore(fixture.Assignee);
+        var accepted = await doerStore.AcceptAsync(taskId);
+        await doerStore.ChangeWorkStatusAsync(taskId, new(TaskWorkStatus.InProgress, accepted.Version));
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var before = await makerStore.LoadDetailsAsync(taskId);
+
+        var updated = await makerStore.UpdateContentAsync(taskId, new(
+            before.Title, before.Description, before.Version, TaskPriority.Urgent));
+
+        Assert.Equal(TaskPriority.Urgent, updated.Priority);
+        Assert.Equal(TaskAssignmentStatus.Accepted, updated.AssignmentStatus);
+        Assert.Equal(TaskWorkStatus.InProgress, updated.WorkStatus);
+        Assert.Equal(before.AcceptedAt, updated.AcceptedAt);
+        Assert.Equal(before.Deadline, updated.Deadline);
+    }
+
+    [Fact]
+    public async Task DoerAndUnrelatedUser_CannotChangePriority()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var details = await makerStore.LoadDetailsAsync(taskId);
+        var request = new UpdateLumaTaskContentRequest(
+            details.Title, details.Description, details.Version, TaskPriority.High);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.CreateStore(fixture.Assignee).UpdateContentAsync(taskId, request));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.CreateStore(fixture.Unrelated).UpdateContentAsync(taskId, request));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(TaskPriority.None, (await db.Tasks.SingleAsync()).Priority);
+    }
+
+    [Fact]
+    public async Task PriorityChange_NotifiesOnlyDoer()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new(
+            before.Title, before.Description, before.Version, TaskPriority.High));
+
+        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
+        Assert.True(notification.Changes.PriorityChanged);
+        Assert.Equal(TaskPriority.None, notification.Changes.PreviousPriority);
+        Assert.Equal(TaskPriority.High, notification.Changes.UpdatedPriority);
+        var recipient = Assert.Single(notification.Recipients);
+        Assert.Equal(TaskNotificationRole.Doer, recipient.Role);
+        Assert.Equal(fixture.Assignee.Email, recipient.Email);
+    }
+
+    [Fact]
+    public async Task SelfAssignedPriorityChange_SendsNoEmail()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Creator.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new(
+            before.Title, before.Description, before.Version, TaskPriority.Medium));
+
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
+    }
+
+    [Fact]
+    public async Task WorkStatusFilter_ReturnsMatchingAuthorizedTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await SeedTaskAsync(fixture, "To do", workStatus: TaskWorkStatus.ToDo);
+        var expected = await SeedTaskAsync(fixture, "In progress", workStatus: TaskWorkStatus.InProgress);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(WorkStatus: TaskWorkStatus.InProgress));
+
+        Assert.Equal(expected.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task AssignmentStatusFilter_ReturnsMatchingTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await SeedTaskAsync(fixture, "Pending", assignmentStatus: TaskAssignmentStatus.Pending);
+        var expected = await SeedTaskAsync(fixture, "Accepted", assignmentStatus: TaskAssignmentStatus.Accepted);
+
+        var tasks = await fixture.CreateStore(fixture.Assignee).LoadAssignedAsync(
+            new TaskListQuery(AssignmentStatus: TaskAssignmentStatus.Accepted));
+
+        Assert.Equal(expected.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task PriorityFilter_IncludingNoPriority_ReturnsMatchingTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var none = await SeedTaskAsync(fixture, "No priority", priority: TaskPriority.None);
+        var urgent = await SeedTaskAsync(fixture, "Urgent", priority: TaskPriority.Urgent);
+        var store = fixture.CreateStore(fixture.Creator);
+
+        var noPriority = await store.LoadCreatedAsync(new TaskListQuery(Priority: TaskPriority.None));
+        var urgentOnly = await store.LoadCreatedAsync(new TaskListQuery(Priority: TaskPriority.Urgent));
+
+        Assert.Equal(none.Id, Assert.Single(noPriority).Id);
+        Assert.Equal(urgent.Id, Assert.Single(urgentOnly).Id);
+    }
+
+    [Fact]
+    public async Task OverdueAndTodayFilters_ReturnMatchingDeadlines()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var overdue = await SeedTaskAsync(fixture, "Overdue", deadline: today.AddDays(-1));
+        var dueToday = await SeedTaskAsync(fixture, "Due today", deadline: today);
+        await SeedTaskAsync(fixture, "Future", deadline: today.AddDays(1));
+        var store = fixture.CreateStore(fixture.Creator);
+
+        var overdueTasks = await store.LoadCreatedAsync(new TaskListQuery(Deadline: TaskDeadlineFilter.Overdue));
+        var todayTasks = await store.LoadCreatedAsync(new TaskListQuery(Deadline: TaskDeadlineFilter.Today));
+
+        Assert.Equal(overdue.Id, Assert.Single(overdueTasks).Id);
+        Assert.Equal(dueToday.Id, Assert.Single(todayTasks).Id);
+    }
+
+    [Fact]
+    public async Task ThisWeekFilter_IncludesTodayThroughSunday()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var daysUntilSunday = ((int)DayOfWeek.Sunday - (int)today.DayOfWeek + 7) % 7;
+        var endOfWeek = today.AddDays(daysUntilSunday);
+        var todayTask = await SeedTaskAsync(fixture, "Today", deadline: today);
+        var sundayTask = endOfWeek == today
+            ? null
+            : await SeedTaskAsync(fixture, "Sunday", deadline: endOfWeek);
+        await SeedTaskAsync(fixture, "Next week", deadline: endOfWeek.AddDays(1));
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(Deadline: TaskDeadlineFilter.ThisWeek));
+
+        Assert.Contains(tasks, task => task.Id == todayTask.Id);
+        if (sundayTask is not null) Assert.Contains(tasks, task => task.Id == sundayTask.Id);
+        Assert.DoesNotContain(tasks, task => task.Title == "Next week");
+    }
+
+    [Fact]
+    public async Task TitleSearch_IsCaseInsensitive()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var expected = await SeedTaskAsync(fixture, "Payment verification");
+        await SeedTaskAsync(fixture, "Launch notes");
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(Search: "PAYMENT"));
+
+        Assert.Equal(expected.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task CombinedFilters_ReturnOnlyTasksMatchingEveryCondition()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var expected = await SeedTaskAsync(
+            fixture, "Payment testing", priority: TaskPriority.High,
+            assignmentStatus: TaskAssignmentStatus.Accepted,
+            workStatus: TaskWorkStatus.InProgress);
+        await SeedTaskAsync(fixture, "Payment documentation", priority: TaskPriority.Low,
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.InProgress);
+        await SeedTaskAsync(fixture, "Payment queued", priority: TaskPriority.High,
+            assignmentStatus: TaskAssignmentStatus.Pending, workStatus: TaskWorkStatus.ToDo);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(new TaskListQuery(
+            Search: "payment",
+            WorkStatus: TaskWorkStatus.InProgress,
+            AssignmentStatus: TaskAssignmentStatus.Accepted,
+            Priority: TaskPriority.High));
+
+        Assert.Equal(expected.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task Filters_NeverReturnUnrelatedTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var own = await SeedTaskAsync(fixture, "Matching task", priority: TaskPriority.Urgent);
+        await SeedTaskAsync(
+            fixture, "Matching unrelated task", priority: TaskPriority.Urgent,
+            creator: fixture.Assignee, assignee: fixture.Unrelated);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(new TaskListQuery(
+            Search: "matching", Priority: TaskPriority.Urgent));
+
+        Assert.Equal(own.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task DeadlineSort_OrdersNearestFirst()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var later = await SeedTaskAsync(fixture, "Later", deadline: today.AddDays(5));
+        var sooner = await SeedTaskAsync(fixture, "Sooner", deadline: today.AddDays(1));
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(Sort: TaskSortOrder.DeadlineNearest));
+
+        Assert.Equal([sooner.Id, later.Id], tasks.Select(task => task.Id));
+    }
+
+    [Fact]
+    public async Task PrioritySort_OrdersHighestFirst()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var low = await SeedTaskAsync(fixture, "Low", priority: TaskPriority.Low);
+        var urgent = await SeedTaskAsync(fixture, "Urgent", priority: TaskPriority.Urgent);
+        var medium = await SeedTaskAsync(fixture, "Medium", priority: TaskPriority.Medium);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(Sort: TaskSortOrder.PriorityHighest));
+
+        Assert.Equal([urgent.Id, medium.Id, low.Id], tasks.Select(task => task.Id));
+    }
+
+    [Fact]
+    public async Task NewestSort_OrdersMostRecentlyCreatedFirst()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var old = await SeedTaskAsync(fixture, "Old", createdAt: DateTime.UtcNow.AddDays(-2));
+        var newest = await SeedTaskAsync(fixture, "Newest", createdAt: DateTime.UtcNow);
+        var middle = await SeedTaskAsync(fixture, "Middle", createdAt: DateTime.UtcNow.AddDays(-1));
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadCreatedAsync(
+            new TaskListQuery(Sort: TaskSortOrder.Newest));
+
+        Assert.Equal([newest.Id, middle.Id, old.Id], tasks.Select(task => task.Id));
+    }
+
     private static CreateLumaTaskRequest NewRequest(Guid assigneeId) => new(
         "  Prepare launch notes  ",
         "  Include the final checklist.  ",
@@ -1146,6 +1416,37 @@ public sealed class TaskStoreTests
     private static RequestTaskDeadlineChange NewDeadlineRequest(int daysFromToday = 10) => new(
         DateOnly.FromDateTime(DateTime.Today.AddDays(daysFromToday)),
         "Waiting for the vendor.");
+
+    private static async Task<LumaTask> SeedTaskAsync(
+        TestFixture fixture,
+        string title,
+        DateOnly? deadline = null,
+        TaskPriority priority = TaskPriority.None,
+        TaskAssignmentStatus assignmentStatus = TaskAssignmentStatus.Pending,
+        TaskWorkStatus workStatus = TaskWorkStatus.ToDo,
+        DateTime? createdAt = null,
+        AppUser? creator = null,
+        AppUser? assignee = null)
+    {
+        var task = new LumaTask
+        {
+            Title = title,
+            Description = string.Empty,
+            CreatorId = (creator ?? fixture.Creator).Id,
+            AssigneeId = (assignee ?? fixture.Assignee).Id,
+            Deadline = deadline ?? DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
+            CreatedAt = createdAt ?? DateTime.UtcNow,
+            Priority = priority,
+            AssignmentStatus = assignmentStatus,
+            WorkStatus = workStatus,
+            AcceptedAt = assignmentStatus == TaskAssignmentStatus.Accepted ? DateTime.UtcNow : null,
+            Version = Guid.NewGuid()
+        };
+        await using var db = fixture.CreateDbContext();
+        db.Tasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
 
     private static async Task AssertNoTasksAsync(TestFixture fixture)
     {

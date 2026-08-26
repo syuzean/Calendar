@@ -126,6 +126,28 @@ public sealed class TaskEmailNotifierTests
         Assert.DoesNotContain("Description", message.PlainTextBody);
     }
 
+    [Fact]
+    public async Task TaskUpdated_RendersPriorityChangeForDoer()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+        var notification = UpdatedNotification(BothRecipients()) with
+        {
+            Changes = new TaskContentChanges(
+                false, "", "", false, "", "",
+                true, TaskPriority.Medium, TaskPriority.High)
+        };
+
+        await notifier.NotifyUpdatedAsync(notification);
+
+        var message = Assert.Single(sender.Messages);
+        Assert.Equal("doer@luma.test", message.RecipientAddress);
+        Assert.Contains("Priority", message.PlainTextBody);
+        Assert.Contains("Medium", message.PlainTextBody);
+        Assert.Contains("High", message.HtmlBody);
+        Assert.DoesNotContain("Description", message.PlainTextBody);
+    }
+
     [Theory]
     [InlineData(TaskWorkStatus.InProgress, "started", "In Progress")]
     [InlineData(TaskWorkStatus.Done, "completed", "Done")]
@@ -210,7 +232,10 @@ public sealed class TaskEmailNotifierTests
 
     private static TaskUpdatedNotification UpdatedNotification(IReadOnlyList<TaskNotificationRecipient> recipients) => new(
         "Payment + refund testing", "Maker", "Doer", new DateOnly(2026, 9, 4),
-        new TaskContentChanges(true, "Payment testing", "Payment + refund testing", false, "", ""),
+        new TaskContentChanges(
+            true, "Payment testing", "Payment + refund testing",
+            false, "", "",
+            false, TaskPriority.None, TaskPriority.None),
         "https://luma.test/tasks?task=11111111-1111-1111-1111-111111111111", recipients);
 
     private static TaskWorkStatusChangedNotification WorkStatusNotification(IReadOnlyList<TaskNotificationRecipient> recipients) => new(
