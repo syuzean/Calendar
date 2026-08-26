@@ -12,6 +12,8 @@ Description:
 Task Maker: {{TaskMaker}}
 Task Doer: {{TaskDoer}}
 Deadline: {{Deadline}}
+{{#Priority}}Priority: {{Priority}}
+{{/Priority}}
 
 Open task in LUMA: {{TaskUrl}}
 

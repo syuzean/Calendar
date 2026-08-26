@@ -1,3 +1,5 @@
+using Calendar.Models;
+
 namespace Calendar.Services.Email;
 
 public interface ITaskEmailTemplateRenderer
@@ -21,6 +23,7 @@ public sealed record TaskCreatedTemplateData(
     string TaskMaker,
     string TaskDoer,
     DateOnly Deadline,
+    TaskPriority Priority,
     string TaskUrl);
 
 public sealed record TaskAcceptedTemplateData(
@@ -82,6 +85,9 @@ public sealed record TaskUpdatedTemplateData(
     bool DescriptionChanged,
     string PreviousDescription,
     string UpdatedDescription,
+    bool PriorityChanged,
+    string PreviousPriority,
+    string UpdatedPriority,
     string TaskUrl);
 
 public sealed record TaskWorkStatusChangedTemplateData(

@@ -124,6 +124,39 @@
     animation: task-picker-rise .16s ease-out;
 }
 
+.task-assignee-search {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid #eeeaf1;
+    padding: 4px 7px 8px;
+    color: #8f8898;
+}
+
+.task-assignee-search input {
+    width: 100%;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #302b37;
+    font: inherit;
+    font-size: 9.5px;
+}
+
+.task-assignee-search input::placeholder { color: #aaa3b0; }
+
+.task-assignee-avatar.invited {
+    background: #f2eeff;
+    color: #6844dc;
+}
+
+.task-assignee-menu button.task-invite-option {
+    margin-top: 2px;
+    border-top: 1px solid #f0ecf3;
+    border-radius: 0 0 9px 9px;
+}
+
 .task-assignee-menu button {
     display: flex;
     align-items: center;

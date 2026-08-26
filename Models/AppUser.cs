@@ -14,4 +14,6 @@ public sealed class AppUser
     public ICollection<LumaTask> CreatedTasks { get; set; } = [];
     public ICollection<LumaTask> AssignedTasks { get; set; } = [];
     public ICollection<LumaTaskComment> TaskComments { get; set; } = [];
+    public ICollection<TaskInvitation> SentTaskInvitations { get; set; } = [];
+    public ICollection<TaskInvitation> ClaimedTaskInvitations { get; set; } = [];
 }

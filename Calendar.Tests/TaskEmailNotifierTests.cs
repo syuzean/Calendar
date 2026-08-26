@@ -22,6 +22,7 @@ public sealed class TaskEmailNotifierTests
         Assert.Equal("doer@luma.test", doer.RecipientAddress);
         Assert.Contains("assigned to you", doer.PlainTextBody);
         Assert.Contains("Open task in LUMA", doer.HtmlBody);
+        Assert.Contains("Priority: High", doer.PlainTextBody);
         Assert.Contains("https://luma.test/tasks?task=", doer.PlainTextBody);
     }
 
@@ -203,6 +204,7 @@ public sealed class TaskEmailNotifierTests
         "Maker",
         "Doer",
         new DateOnly(2026, 9, 4),
+        TaskPriority.High,
         "https://luma.test/tasks?task=11111111-1111-1111-1111-111111111111",
         recipients);
 

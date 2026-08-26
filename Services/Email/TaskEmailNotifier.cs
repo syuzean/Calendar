@@ -20,6 +20,7 @@ public sealed class TaskEmailNotifier(
             notification.MakerName,
             notification.DoerName,
             notification.Deadline,
+            notification.Priority,
             notification.TaskUrl)),
         cancellationToken);
 
@@ -111,6 +112,9 @@ public sealed class TaskEmailNotifier(
             notification.Changes.DescriptionChanged,
             notification.Changes.PreviousDescription,
             notification.Changes.UpdatedDescription,
+            notification.Changes.PriorityChanged,
+            PriorityLabel(notification.Changes.PreviousPriority),
+            PriorityLabel(notification.Changes.UpdatedPriority),
             notification.TaskUrl)),
         cancellationToken);
 
@@ -193,5 +197,11 @@ public sealed class TaskEmailNotifier(
         TaskWorkStatus.InProgress => "In Progress",
         TaskWorkStatus.Done => "Done",
         _ => status.ToString()
+    };
+
+    private static string PriorityLabel(TaskPriority priority) => priority switch
+    {
+        TaskPriority.None => "No priority",
+        _ => priority.ToString()
     };
 }

@@ -31,6 +31,7 @@ public sealed record TaskCreatedNotification(
     string MakerName,
     string DoerName,
     DateOnly Deadline,
+    TaskPriority Priority,
     string TaskUrl,
     IReadOnlyList<TaskNotificationRecipient> Recipients);
 
@@ -82,7 +83,10 @@ public sealed record TaskContentChanges(
     string UpdatedTitle,
     bool DescriptionChanged,
     string PreviousDescription,
-    string UpdatedDescription);
+    string UpdatedDescription,
+    bool PriorityChanged,
+    TaskPriority PreviousPriority,
+    TaskPriority UpdatedPriority);
 
 public sealed record TaskUpdatedNotification(
     string TaskTitle,

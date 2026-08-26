@@ -12,6 +12,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<EventInvitation> EventInvitations => Set<EventInvitation>();
     public DbSet<LumaTask> Tasks => Set<LumaTask>();
     public DbSet<LumaTaskComment> TaskComments => Set<LumaTaskComment>();
+    public DbSet<TaskInvitation> TaskInvitations => Set<TaskInvitation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -87,6 +88,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             {
                 table.HasCheckConstraint("CK_Tasks_AssignmentStatus", "[AssignmentStatus] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Tasks_WorkStatus", "[WorkStatus] IN (0, 1, 2)");
+                table.HasCheckConstraint("CK_Tasks_Priority", "[Priority] IN (0, 1, 2, 3, 4)");
             });
             entity.HasOne(task => task.Creator)
                 .WithMany(user => user.CreatedTasks)
@@ -110,6 +112,31 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(comment => comment.Author)
                 .WithMany(user => user.TaskComments)
                 .HasForeignKey(comment => comment.AuthorUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<TaskInvitation>(entity =>
+        {
+            entity.ToTable("TaskInvitations", table =>
+                table.HasCheckConstraint("CK_TaskInvitations_Status", "[Status] IN (0, 1, 2)"));
+            entity.HasIndex(invitation => invitation.TaskId).IsUnique();
+            entity.HasIndex(invitation => invitation.TokenHash).IsUnique();
+            entity.HasIndex(invitation => new { invitation.NormalizedRecipientEmail, invitation.Status });
+            entity.Property(invitation => invitation.RecipientEmail).HasMaxLength(254);
+            entity.Property(invitation => invitation.NormalizedRecipientEmail).HasMaxLength(254);
+            entity.Property(invitation => invitation.TokenHash).HasMaxLength(64);
+            entity.Property(invitation => invitation.RowVersion).IsRowVersion();
+            entity.HasOne(invitation => invitation.Task)
+                .WithOne(task => task.Invitation)
+                .HasForeignKey<TaskInvitation>(invitation => invitation.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(invitation => invitation.Inviter)
+                .WithMany(user => user.SentTaskInvitations)
+                .HasForeignKey(invitation => invitation.InviterId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(invitation => invitation.ClaimedByUser)
+                .WithMany(user => user.ClaimedTaskInvitations)
+                .HasForeignKey(invitation => invitation.ClaimedByUserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
     }

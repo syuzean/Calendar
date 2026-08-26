@@ -55,11 +55,15 @@
                     </div>
                     <div>
                         <dt>Assignment status</dt>
-                        <dd><span class="task-detail-status @StatusClass(Details.AssignmentStatus)">@StatusLabel(Details.AssignmentStatus)</span></dd>
+                        <dd><span class="task-detail-status @StatusClass(Details.AssignmentStatus, Details.IsInvited)">@StatusLabel(Details.AssignmentStatus, Details.IsInvited)</span></dd>
                     </div>
                     <div>
                         <dt>Work progress</dt>
                         <dd><span class="task-detail-status work @WorkStatusClass(Details.WorkStatus)">@WorkStatusLabel(Details.WorkStatus)</span></dd>
+                    </div>
+                    <div>
+                        <dt>Priority</dt>
+                        <dd><span class="task-detail-priority @PriorityClass(Details.Priority)">@PriorityLabel(Details.Priority)</span></dd>
                     </div>
                 </dl>
 
@@ -190,14 +194,16 @@
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
         ? "?"
         : char.ToUpperInvariant(name.Trim()[0]).ToString();
-    private static string StatusClass(TaskAssignmentStatus status) =>
+    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false) =>
+        isInvited ? "invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "accepted",
             TaskAssignmentStatus.DeadlineChangeRequested => "deadline-requested",
             _ => "pending"
         };
-    private static string StatusLabel(TaskAssignmentStatus status) =>
+    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false) =>
+        isInvited ? "Invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "Accepted",
@@ -216,4 +222,6 @@
         TaskWorkStatus.Done => "Done",
         _ => "To Do"
     };
+    private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
+    private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
 }

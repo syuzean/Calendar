@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
+using Calendar.Models;
 
 namespace Calendar.Services.Email;
 
@@ -34,8 +35,9 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         return RenderTemplate("EventCancelled", values);
     }
 
-    public RenderedEmailTemplate RenderTaskCreated(TaskCreatedTemplateData data) =>
-        RenderTemplate("TaskCreated", TaskValues(
+    public RenderedEmailTemplate RenderTaskCreated(TaskCreatedTemplateData data)
+    {
+        var values = TaskValues(
             data.RecipientName,
             data.RecipientEmail,
             data.IntroText,
@@ -45,7 +47,10 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             data.TaskDoer,
             data.Deadline,
             data.TaskUrl,
-            null));
+            null);
+        values["Priority"] = data.Priority == TaskPriority.None ? string.Empty : data.Priority.ToString();
+        return RenderTemplate("TaskCreated", values);
+    }
 
     public RenderedEmailTemplate RenderTaskAccepted(TaskAcceptedTemplateData data) =>
         RenderTemplate("TaskAccepted", TaskValues(
@@ -90,6 +95,9 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["DescriptionChanged"] = data.DescriptionChanged ? "true" : string.Empty,
             ["PreviousDescription"] = DisplayDescription(data.PreviousDescription),
             ["UpdatedDescription"] = DisplayDescription(data.UpdatedDescription),
+            ["PriorityChanged"] = data.PriorityChanged ? "true" : string.Empty,
+            ["PreviousPriority"] = data.PreviousPriority,
+            ["UpdatedPriority"] = data.UpdatedPriority,
             ["TaskUrl"] = data.TaskUrl
         });
 

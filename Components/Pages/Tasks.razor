@@ -3,9 +3,12 @@
 @attribute [Authorize]
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject TaskStore TaskStore
+@inject IJSRuntime JS
 @using global::Calendar.Components.Tasks
 @using global::Calendar.Models
 @using global::Calendar.Services
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
 
 <PageTitle>Tasks · Luma</PageTitle>
 
@@ -53,17 +56,64 @@
             </div>
         }
 
+        @if (!string.IsNullOrWhiteSpace(TaskInvitationError))
+        {
+            <div class="tasks-invitation-error" role="alert">@TaskInvitationError</div>
+        }
+
         <section class="tasks-surface" aria-label="Task lists">
             <div class="tasks-workspace">
-                <div class="task-tabs" role="tablist" aria-label="Task views">
-                    <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Assigned)"
-                            class="@(ActiveTab == TaskListTab.Assigned ? "active" : null)" @onclick="ShowAssignedTasks">
-                        My Tasks <span>@AssignedTasks.Count</span>
-                    </button>
-                    <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Created)"
-                            class="@(ActiveTab == TaskListTab.Created ? "active" : null)" @onclick="ShowCreatedTasks">
-                        Created by me <span>@CreatedTasks.Count</span>
-                    </button>
+                <div class="task-view-bar">
+                    <div class="task-tabs" role="tablist" aria-label="Task ownership view">
+                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Assigned)"
+                                class="@(ActiveTab == TaskListTab.Assigned ? "active" : null)" @onclick="ShowAssignedTasks">
+                            My Tasks <span>@AssignedTasks.Count</span>
+                        </button>
+                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Created)"
+                                class="@(ActiveTab == TaskListTab.Created ? "active" : null)" @onclick="ShowCreatedTasks">
+                            Created by me <span>@CreatedTasks.Count</span>
+                        </button>
+                    </div>
+                    <div class="task-presentation-switch" role="group" aria-label="Task presentation">
+                        <button type="button" class="@(Presentation == TaskPresentation.List ? "active" : null)"
+                                aria-pressed="@(Presentation == TaskPresentation.List)" @onclick="ShowList">List</button>
+                        <button type="button" class="@(Presentation == TaskPresentation.Board ? "active" : null)"
+                                aria-pressed="@(Presentation == TaskPresentation.Board)" @onclick="ShowBoard">Board</button>
+                    </div>
+                </div>
+
+                <div class="task-list-tools" aria-label="Search, filter, and sort tasks">
+                    <label class="task-search">
+                        <span aria-hidden="true">⌕</span>
+                        <input type="search" placeholder="Search tasks…" aria-label="Search tasks by title"
+                               @bind="SearchText" @bind:event="oninput" @bind:after="ApplyFiltersAsync" />
+                    </label>
+                    <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
+                        <option value="">All</option><option value="ToDo">To Do</option>
+                        <option value="InProgress">In Progress</option><option value="Done">Done</option>
+                    </select></label>
+                    <label><span>Assignment</span><select @bind="AssignmentStatusFilter" @bind:after="ApplyFiltersAsync">
+                        <option value="">All</option><option value="Pending">Pending</option>
+                        <option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option>
+                    </select></label>
+                    <label><span>Priority</span><select @bind="PriorityFilter" @bind:after="ApplyFiltersAsync">
+                        <option value="">All</option><option value="None">No priority</option>
+                        <option value="Low">Low</option><option value="Medium">Medium</option>
+                        <option value="High">High</option><option value="Urgent">Urgent</option>
+                    </select></label>
+                    <label><span>Deadline</span><select @bind="DeadlineFilter" @bind:after="ApplyFiltersAsync">
+                        <option value="All">All</option><option value="Overdue">Overdue</option>
+                        <option value="Today">Today</option><option value="ThisWeek">This week</option>
+                    </select></label>
+                    <label><span>Sort</span><select @bind="SortOrder" @bind:after="ApplyFiltersAsync">
+                        <option value="DeadlineNearest">Deadline: nearest</option>
+                        <option value="PriorityHighest">Priority: highest</option>
+                        <option value="Newest">Newest</option>
+                    </select></label>
+                    @if (HasActiveFilters)
+                    {
+                        <button class="clear-task-filters" type="button" @onclick="ClearFiltersAsync">Clear filters</button>
+                    }
                 </div>
 
                 @if (IsLoading)
@@ -80,12 +130,70 @@
                         <p>@LoadError</p>
                     </div>
                 }
+                else if (Presentation == TaskPresentation.Board)
+                {
+                    var boardItems = CurrentBoardItems();
+                    <div class="task-board" aria-label="Task Board">
+                        @foreach (var status in BoardStatuses)
+                        {
+                            var columnItems = boardItems.Where(item => item.WorkStatus == status).ToArray();
+                            <section class="task-board-column" data-task-drop="@status" aria-label="@WorkStatusLabel(status) tasks">
+                                <header>
+                                    <h2>@WorkStatusLabel(status)</h2>
+                                    <span>@columnItems.Length</span>
+                                </header>
+                                <div class="task-board-column-body">
+                                    @if (columnItems.Length == 0)
+                                    {
+                                        <div class="task-board-empty">No tasks here</div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var task in columnItems)
+                                        {
+                                            var deadlineClass = DeadlineClass(task.Deadline);
+                                            <button type="button" class="task-board-card @deadlineClass"
+                                                    draggable="@(task.CanDrag ? "true" : "false")"
+                                                    data-task-board-card="true"
+                                                    data-task-drag="@(task.CanDrag ? task.Id.ToString("D") : null)"
+                                                    data-task-version="@(task.CanDrag ? task.Version.ToString("D") : null)"
+                                                    data-work-status="@(task.CanDrag ? task.WorkStatus.ToString() : null)"
+                                                    title="@(task.CanDrag ? "Drag to the next work stage" : "Open task details")"
+                                                    @onclick="() => OpenTaskAsync(task.Id)">
+                                                <strong>@task.Title</strong>
+                                                <span class="task-board-person">@task.PersonLabel <b>@task.PersonName</b></span>
+                                                <span class="task-board-card-meta">
+                                                    <span class="task-priority-badge @PriorityClass(task.Priority)">
+                                                        @if (task.Priority != TaskPriority.None) { <i aria-hidden="true">●</i> }
+                                                        @PriorityLabel(task.Priority)
+                                                    </span>
+                                                    <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited)">@StatusLabel(task.AssignmentStatus, task.IsInvited)</span>
+                                                </span>
+                                                <span class="task-board-deadline @deadlineClass">
+                                                    <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
+                                                </span>
+                                            </button>
+                                        }
+                                    }
+                                </div>
+                            </section>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(BoardError))
+                    {
+                        <div class="task-board-message error" role="alert">@BoardError</div>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(BoardNotice))
+                    {
+                        <div class="task-board-message" role="status">@BoardNotice</div>
+                    }
+                }
                 else if (ActiveTab == TaskListTab.Assigned)
                 {
                     <div role="tabpanel" class="task-panel" aria-label="My Tasks">
                         @if (AssignedTasks.Count == 0)
                         {
-                            <TaskEmptyState Message="No tasks assigned to you yet." />
+                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "No tasks assigned to you yet.")" />
                         }
                         else
                         {
@@ -101,6 +209,7 @@
                                                 <small>Created by <b>@task.CreatorName</b></small>
                                                 <span class="task-status-badge @StatusClass(task.AssignmentStatus)">@StatusLabel(task.AssignmentStatus)</span>
                                                 <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
+                                                <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
                                             </span>
                                         </span>
                                         <span class="task-card-deadline @deadlineClass">
@@ -119,7 +228,7 @@
                     <div role="tabpanel" class="task-panel" aria-label="Created by me">
                         @if (CreatedTasks.Count == 0)
                         {
-                            <TaskEmptyState Message="You haven't created any tasks yet." />
+                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "You haven't created any tasks yet.")" />
                         }
                         else
                         {
@@ -133,8 +242,9 @@
                                             <strong>@task.Title</strong>
                                             <span class="task-card-meta">
                                                 <small>Assigned to <b>@task.AssigneeName</b></small>
-                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus)">@StatusLabel(task.AssignmentStatus)</span>
+                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited)">@StatusLabel(task.AssignmentStatus, task.IsInvited)</span>
                                                 <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
+                                                <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
                                             </span>
                                         </span>
                                         <span class="task-card-deadline @deadlineClass">
@@ -188,6 +298,7 @@
 
 @code {
     [SupplyParameterFromQuery(Name = "task")] public Guid? LinkedTaskId { get; set; }
+    [SupplyParameterFromQuery(Name = "taskInvitationError")] public string? TaskInvitationError { get; set; }
 
     private string CurrentUserName = "User";
     private string FeedbackMessage = string.Empty;
@@ -209,10 +320,31 @@
     private bool IsSavingTaskEdit;
     private bool IsChangingWorkStatus;
     private string TaskEditError = string.Empty;
+    private string BoardError = string.Empty;
+    private string BoardNotice = string.Empty;
     private TaskListTab ActiveTab = TaskListTab.Assigned;
     private IReadOnlyList<AssignedLumaTask> AssignedTasks = [];
     private IReadOnlyList<CreatedLumaTask> CreatedTasks = [];
     private LumaTaskDetails? SelectedTask;
+    private TaskPresentation Presentation = TaskPresentation.List;
+    private DotNetObjectReference<Tasks>? BoardDragReference;
+    private static readonly TaskWorkStatus[] BoardStatuses =
+        [TaskWorkStatus.ToDo, TaskWorkStatus.InProgress, TaskWorkStatus.Done];
+    private string SearchText = string.Empty;
+    private string WorkStatusFilter = string.Empty;
+    private string AssignmentStatusFilter = string.Empty;
+    private string PriorityFilter = string.Empty;
+    private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
+    private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
+    private long TaskLoadGeneration;
+
+    private bool HasActiveFilters =>
+        !string.IsNullOrWhiteSpace(SearchText) ||
+        WorkStatusFilter.Length > 0 ||
+        AssignmentStatusFilter.Length > 0 ||
+        PriorityFilter.Length > 0 ||
+        DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
+        SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
     private string Initials
     {
@@ -233,6 +365,13 @@
         await LoadTasksAsync();
         if (LinkedTaskId is not null)
             await OpenTaskAsync(LinkedTaskId.Value);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        BoardDragReference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("lumaTaskBoardDrag.initialize", BoardDragReference);
     }
 
     private void OpenCreateTask()
@@ -262,15 +401,18 @@
 
     private void DismissFeedback() => FeedbackMessage = string.Empty;
 
-    private async Task LoadTasksAsync()
+    private async Task LoadTasksAsync(bool showLoading = true)
     {
-        IsLoading = true;
+        var generation = ++TaskLoadGeneration;
+        if (showLoading) IsLoading = true;
         LoadError = string.Empty;
         try
         {
-            var assigned = TaskStore.LoadAssignedAsync();
-            var created = TaskStore.LoadCreatedAsync();
+            var query = CurrentListQuery();
+            var assigned = TaskStore.LoadAssignedAsync(query);
+            var created = TaskStore.LoadCreatedAsync(query);
             await Task.WhenAll(assigned, created);
+            if (generation != TaskLoadGeneration) return;
             AssignedTasks = await assigned;
             CreatedTasks = await created;
         }
@@ -280,12 +422,108 @@
         }
         finally
         {
-            IsLoading = false;
+            if (generation == TaskLoadGeneration) IsLoading = false;
         }
     }
 
-    private void ShowAssignedTasks() => ActiveTab = TaskListTab.Assigned;
-    private void ShowCreatedTasks() => ActiveTab = TaskListTab.Created;
+    private Task ApplyFiltersAsync() => LoadTasksAsync(showLoading: false);
+
+    private async Task ClearFiltersAsync()
+    {
+        SearchText = string.Empty;
+        WorkStatusFilter = string.Empty;
+        AssignmentStatusFilter = string.Empty;
+        PriorityFilter = string.Empty;
+        DeadlineFilter = nameof(TaskDeadlineFilter.All);
+        SortOrder = nameof(TaskSortOrder.DeadlineNearest);
+        await LoadTasksAsync(showLoading: false);
+    }
+
+    private TaskListQuery CurrentListQuery() => new(
+        SearchText,
+        ParseOptional<TaskWorkStatus>(WorkStatusFilter),
+        ParseOptional<TaskAssignmentStatus>(AssignmentStatusFilter),
+        ParseOptional<TaskPriority>(PriorityFilter),
+        Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
+        Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest);
+
+    private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
+        Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
+
+    private void ShowAssignedTasks()
+    {
+        ActiveTab = TaskListTab.Assigned;
+        ClearBoardMessages();
+    }
+
+    private void ShowCreatedTasks()
+    {
+        ActiveTab = TaskListTab.Created;
+        ClearBoardMessages();
+    }
+
+    private void ShowList()
+    {
+        Presentation = TaskPresentation.List;
+        ClearBoardMessages();
+    }
+
+    private void ShowBoard()
+    {
+        Presentation = TaskPresentation.Board;
+        ClearBoardMessages();
+    }
+
+    [JSInvokable]
+    public async Task HandleTaskBoardDrop(string taskIdValue, string targetStatusValue, string versionValue)
+    {
+        BoardError = string.Empty;
+        BoardNotice = string.Empty;
+        if (!Guid.TryParse(taskIdValue, out var taskId) ||
+            !Guid.TryParse(versionValue, out var version) ||
+            !Enum.TryParse<TaskWorkStatus>(targetStatusValue, out var targetStatus))
+        {
+            BoardError = "The task drop could not be understood. Reload the page and try again.";
+            return;
+        }
+
+        var task = CurrentBoardItems().SingleOrDefault(item => item.Id == taskId);
+        if (task is null || !task.CanDrag || !IsForwardTransition(task.WorkStatus, targetStatus))
+        {
+            BoardError = "Tasks can move only forward after the Task Doer accepts them.";
+            return;
+        }
+
+        try
+        {
+            var updated = await TaskStore.ChangeWorkStatusAsync(
+                taskId, new ChangeTaskWorkStatusRequest(targetStatus, version));
+            if (SelectedTask?.Id == taskId) SelectedTask = updated;
+            BoardNotice = TaskStore.LastNotice ?? $"Task moved to {WorkStatusLabel(targetStatus)}.";
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            BoardError = exception.Message;
+        }
+        finally
+        {
+            await LoadTasksAsync(showLoading: false);
+        }
+    }
+
+    [JSInvokable]
+    public Task HandleInvalidTaskBoardDrop()
+    {
+        BoardNotice = string.Empty;
+        BoardError = "Tasks can move only forward: To Do → In Progress → Done.";
+        return Task.CompletedTask;
+    }
+
+    private void ClearBoardMessages()
+    {
+        BoardError = string.Empty;
+        BoardNotice = string.Empty;
+    }
 
     private async Task OpenTaskAsync(Guid taskId)
     {
@@ -492,7 +730,8 @@
         return deadline == today ? "due-today" : string.Empty;
     }
 
-    private static string StatusClass(TaskAssignmentStatus status) =>
+    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false) =>
+        isInvited ? "invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "accepted",
@@ -500,7 +739,8 @@
             _ => "pending"
         };
 
-    private static string StatusLabel(TaskAssignmentStatus status) =>
+    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false) =>
+        isInvited ? "Invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "Accepted",
@@ -522,5 +762,47 @@
         _ => "To Do"
     };
 
+    private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
+    private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
+
+    private IReadOnlyList<BoardTaskItem> CurrentBoardItems() => ActiveTab == TaskListTab.Assigned
+        ? AssignedTasks.Select(task => new BoardTaskItem(
+            task.Id, task.Title, "Created by", task.CreatorName, task.Deadline,
+            task.AssignmentStatus, task.WorkStatus, task.Priority, task.Version, false,
+            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus))).ToArray()
+        : CreatedTasks.Select(task => new BoardTaskItem(
+            task.Id, task.Title, "Assigned to", task.AssigneeName, task.Deadline,
+            task.AssignmentStatus, task.WorkStatus, task.Priority, task.Version, task.IsInvited,
+            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus))).ToArray();
+
+    private static bool CanDrag(bool canManage, TaskAssignmentStatus assignmentStatus, TaskWorkStatus workStatus) =>
+        canManage && assignmentStatus == TaskAssignmentStatus.Accepted && workStatus != TaskWorkStatus.Done;
+
+    private static bool IsForwardTransition(TaskWorkStatus current, TaskWorkStatus target) =>
+        (current, target) is
+            (TaskWorkStatus.ToDo, TaskWorkStatus.InProgress) or
+            (TaskWorkStatus.InProgress, TaskWorkStatus.Done);
+
+    public async ValueTask DisposeAsync()
+    {
+        if (BoardDragReference is null) return;
+        try { await JS.InvokeVoidAsync("lumaTaskBoardDrag.dispose"); }
+        catch (JSDisconnectedException) { }
+        BoardDragReference?.Dispose();
+    }
+
     private enum TaskListTab { Assigned, Created }
+    private enum TaskPresentation { List, Board }
+    private sealed record BoardTaskItem(
+        Guid Id,
+        string Title,
+        string PersonLabel,
+        string PersonName,
+        DateOnly Deadline,
+        TaskAssignmentStatus AssignmentStatus,
+        TaskWorkStatus WorkStatus,
+        TaskPriority Priority,
+        Guid Version,
+        bool IsInvited,
+        bool CanDrag);
 }

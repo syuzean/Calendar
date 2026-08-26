@@ -1,6 +1,7 @@
 @using System.Security.Claims
 @using global::Calendar.Data
 @using global::Calendar.Services
+@using global::Calendar.Models
 @using Microsoft.EntityFrameworkCore
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IDbContextFactory<CalendarDbContext> DbContextFactory
@@ -52,28 +53,42 @@
                     @if (ShowAssigneePicker)
                     {
                         <div id="task-assignee-options" class="task-assignee-menu" role="listbox" aria-label="Choose an assignee">
-                            @if (Assignees.Count == 0)
+                            <label class="task-assignee-search">
+                                <span aria-hidden="true">⌕</span>
+                                <input type="search" inputmode="email" placeholder="Search people or enter email"
+                                       aria-label="Search people or enter an email address"
+                                       @bind="AssigneeSearch" @bind:event="oninput" @bind:after="HandleAssigneeSearchChanged" />
+                            </label>
+                            @foreach (var assignee in FilteredAssignees)
                             {
-                                <span class="task-assignee-loading">Loading people…</span>
+                                <button type="button" role="option" aria-selected="@(assignee.Id == SelectedAssigneeId)"
+                                        class="@(assignee.Id == SelectedAssigneeId ? "selected" : null)"
+                                        @onclick="() => SelectAssignee(assignee.Id)">
+                                    <span class="task-assignee-avatar" aria-hidden="true">@InitialFor(assignee.Name)</span>
+                                    <span>
+                                        <strong>@(assignee.IsCurrentUser ? "Me" : assignee.Name)</strong>
+                                        <small>@(assignee.IsCurrentUser ? assignee.Name : assignee.Email)</small>
+                                    </span>
+                                    @if (assignee.Id == SelectedAssigneeId)
+                                    {
+                                        <i aria-hidden="true">✓</i>
+                                    }
+                                </button>
                             }
-                            else
+                            @if (CanInviteEmail)
                             {
-                                @foreach (var assignee in Assignees)
-                                {
-                                    <button type="button" role="option" aria-selected="@(assignee.Id == SelectedAssigneeId)"
-                                            class="@(assignee.Id == SelectedAssigneeId ? "selected" : null)"
-                                            @onclick="() => SelectAssignee(assignee.Id)">
-                                        <span class="task-assignee-avatar" aria-hidden="true">@InitialFor(assignee.Name)</span>
-                                        <span>
-                                            <strong>@(assignee.IsCurrentUser ? "Me" : assignee.Name)</strong>
-                                            <small>@(assignee.IsCurrentUser ? assignee.Name : assignee.Email)</small>
-                                        </span>
-                                        @if (assignee.Id == SelectedAssigneeId)
-                                        {
-                                            <i aria-hidden="true">✓</i>
-                                        }
-                                    </button>
-                                }
+                                <button type="button" role="option" aria-selected="false" class="task-invite-option"
+                                        @onclick="SelectInvitationEmail">
+                                    <span class="task-assignee-avatar invited" aria-hidden="true">@@</span>
+                                    <span><strong>Invite @NormalizedAssigneeSearch</strong><small>No LUMA account yet</small></span>
+                                    <i aria-hidden="true">→</i>
+                                </button>
+                            }
+                            else if (FilteredAssignees.Count == 0)
+                            {
+                                <span class="task-assignee-loading">
+                                    @(string.IsNullOrWhiteSpace(AssigneeSearch) ? "No people available." : "No matching LUMA user. Enter a complete email address to invite them.")
+                                </span>
                             }
                         </div>
                     }
@@ -88,6 +103,8 @@
                                     OpenUpward="true" Value="@Deadline" ValueChanged="SetDeadline"
                                     ErrorMessage="@DeadlineError" />
             </div>
+
+            <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
 
             <div class="dialog-actions task-dialog-actions">
                 <span class="action-spacer"></span>
@@ -110,7 +127,10 @@
     private string AssigneeError = string.Empty;
     private string DeadlineError = string.Empty;
     private Guid? SelectedAssigneeId;
+    private string SelectedInvitationEmail = string.Empty;
+    private string AssigneeSearch = string.Empty;
     private DateOnly? Deadline;
+    private TaskPriority Priority = TaskPriority.None;
     private bool ShowAssigneePicker;
     private LumaDateOnlyPicker? DeadlinePicker;
 
@@ -142,13 +162,29 @@
     }
 
     private AssigneeOption? SelectedAssignee => Assignees.FirstOrDefault(user => user.Id == SelectedAssigneeId);
-    private string SelectedAssigneeLabel => SelectedAssignee is null ? "Choose a person" : SelectedAssignee.IsCurrentUser ? "Me" : SelectedAssignee.Name;
-    private string SelectedAssigneeDetail => SelectedAssignee is null ? "Required" : SelectedAssignee.IsCurrentUser ? SelectedAssignee.Name : SelectedAssignee.Email;
-    private string SelectedAssigneeInitial => SelectedAssignee is null ? "?" : InitialFor(SelectedAssignee.Name);
+    private string SelectedAssigneeLabel => SelectedInvitationEmail.Length > 0
+        ? SelectedInvitationEmail
+        : SelectedAssignee is null ? "Choose a person" : SelectedAssignee.IsCurrentUser ? "Me" : SelectedAssignee.Name;
+    private string SelectedAssigneeDetail => SelectedInvitationEmail.Length > 0
+        ? "Invited · No LUMA account yet"
+        : SelectedAssignee is null ? "Required" : SelectedAssignee.IsCurrentUser ? SelectedAssignee.Name : SelectedAssignee.Email;
+    private string SelectedAssigneeInitial => SelectedInvitationEmail.Length > 0
+        ? "@"
+        : SelectedAssignee is null ? "?" : InitialFor(SelectedAssignee.Name);
+    private string NormalizedAssigneeSearch => AssigneeSearch.Trim();
+    private IReadOnlyList<AssigneeOption> FilteredAssignees => string.IsNullOrWhiteSpace(AssigneeSearch)
+        ? Assignees
+        : Assignees.Where(user =>
+                user.Name.Contains(AssigneeSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                user.Email.Contains(AssigneeSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    private bool CanInviteEmail =>
+        IsValidEmail(NormalizedAssigneeSearch) &&
+        Assignees.All(user => !string.Equals(user.Email, NormalizedAssigneeSearch, StringComparison.OrdinalIgnoreCase));
     private async Task Submit()
     {
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
-        AssigneeError = SelectedAssignee is null ? "Choose an assignee." : string.Empty;
+        AssigneeError = SelectedAssignee is null && SelectedInvitationEmail.Length == 0 ? "Choose an assignee." : string.Empty;
         DeadlineError = Deadline is null ? "Choose a deadline." : string.Empty;
         if (Deadline is not null && Deadline.Value < DateOnly.FromDateTime(DateTime.Today))
             DeadlineError = "Deadline cannot be before today.";
@@ -161,8 +197,10 @@
         await Created.InvokeAsync(new CreateLumaTaskRequest(
             Title.Trim(),
             Description.Trim(),
-            SelectedAssigneeId!.Value,
-            Deadline));
+            SelectedAssigneeId,
+            Deadline,
+            Priority,
+            SelectedInvitationEmail));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();
@@ -177,8 +215,31 @@
     {
         if (Assignees.All(user => user.Id != userId)) return;
         SelectedAssigneeId = userId;
+        SelectedInvitationEmail = string.Empty;
+        AssigneeSearch = string.Empty;
         AssigneeError = string.Empty;
         ShowAssigneePicker = false;
+    }
+
+    private void SelectInvitationEmail()
+    {
+        if (!CanInviteEmail) return;
+        SelectedAssigneeId = null;
+        SelectedInvitationEmail = NormalizedAssigneeSearch;
+        AssigneeSearch = string.Empty;
+        AssigneeError = string.Empty;
+        ShowAssigneePicker = false;
+    }
+
+    private void HandleAssigneeSearchChanged()
+    {
+        SelectedInvitationEmail = string.Empty;
+        if (string.IsNullOrWhiteSpace(AssigneeSearch)) return;
+
+        var exactUser = Assignees.FirstOrDefault(user =>
+            string.Equals(user.Email, NormalizedAssigneeSearch, StringComparison.OrdinalIgnoreCase));
+        SelectedAssigneeId = exactUser?.Id;
+        if (exactUser is not null) AssigneeError = string.Empty;
     }
 
     private void SetDeadline(DateOnly? deadline)
@@ -208,6 +269,11 @@
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
         ? "?"
         : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+    private static bool IsValidEmail(string email) =>
+        email.Length <= 254 &&
+        System.Net.Mail.MailAddress.TryCreate(email, out var address) &&
+        string.Equals(address.Address, email, StringComparison.OrdinalIgnoreCase);
 
     private sealed record AssigneeOption(Guid Id, string Name, string Email, bool IsCurrentUser);
 }

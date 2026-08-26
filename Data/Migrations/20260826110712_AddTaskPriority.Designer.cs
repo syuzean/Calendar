@@ -4,6 +4,7 @@ using Calendar.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Calendar.Data.Migrations
 {
     [DbContext(typeof(CalendarDbContext))]
-    partial class CalendarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826110712_AddTaskPriority")]
+    partial class AddTaskPriority
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -220,7 +223,7 @@ namespace Calendar.Data.Migrations
                     b.Property<DateTime?>("AcceptedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid?>("AssigneeId")
+                    b.Property<Guid>("AssigneeId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("AssignmentStatus")
@@ -310,74 +313,6 @@ namespace Calendar.Data.Migrations
                     b.ToTable("TaskComments", (string)null);
                 });
 
-            modelBuilder.Entity("Calendar.Models.TaskInvitation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("ClaimedByUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("ClaimedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("ExpiresUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("InviterId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("NormalizedRecipientEmail")
-                        .IsRequired()
-                        .HasMaxLength(254)
-                        .HasColumnType("nvarchar(254)");
-
-                    b.Property<string>("RecipientEmail")
-                        .IsRequired()
-                        .HasMaxLength(254)
-                        .HasColumnType("nvarchar(254)");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ClaimedByUserId");
-
-                    b.HasIndex("InviterId");
-
-                    b.HasIndex("TaskId")
-                        .IsUnique();
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.HasIndex("NormalizedRecipientEmail", "Status");
-
-                    b.ToTable("TaskInvitations", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_TaskInvitations_Status", "[Status] IN (0, 1, 2)");
-                        });
-                });
-
             modelBuilder.Entity("Calendar.Models.CalendarEvent", b =>
                 {
                     b.HasOne("Calendar.Models.AppUser", "Owner")
@@ -431,7 +366,8 @@ namespace Calendar.Data.Migrations
                     b.HasOne("Calendar.Models.AppUser", "Assignee")
                         .WithMany("AssignedTasks")
                         .HasForeignKey("AssigneeId")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
 
                     b.HasOne("Calendar.Models.AppUser", "Creator")
                         .WithMany("CreatedTasks")
@@ -463,47 +399,17 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Task");
                 });
 
-            modelBuilder.Entity("Calendar.Models.TaskInvitation", b =>
-                {
-                    b.HasOne("Calendar.Models.AppUser", "ClaimedByUser")
-                        .WithMany("ClaimedTaskInvitations")
-                        .HasForeignKey("ClaimedByUserId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.HasOne("Calendar.Models.AppUser", "Inviter")
-                        .WithMany("SentTaskInvitations")
-                        .HasForeignKey("InviterId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("Calendar.Models.LumaTask", "Task")
-                        .WithOne("Invitation")
-                        .HasForeignKey("Calendar.Models.TaskInvitation", "TaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("ClaimedByUser");
-
-                    b.Navigation("Inviter");
-
-                    b.Navigation("Task");
-                });
-
             modelBuilder.Entity("Calendar.Models.AppUser", b =>
                 {
                     b.Navigation("AssignedTasks");
 
                     b.Navigation("ClaimedInvitations");
 
-                    b.Navigation("ClaimedTaskInvitations");
-
                     b.Navigation("CreatedTasks");
 
                     b.Navigation("OwnedEvents");
 
                     b.Navigation("Participations");
-
-                    b.Navigation("SentTaskInvitations");
 
                     b.Navigation("TaskComments");
                 });
@@ -518,8 +424,6 @@ namespace Calendar.Data.Migrations
             modelBuilder.Entity("Calendar.Models.LumaTask", b =>
                 {
                     b.Navigation("Comments");
-
-                    b.Navigation("Invitation");
                 });
 #pragma warning restore 612, 618
         }

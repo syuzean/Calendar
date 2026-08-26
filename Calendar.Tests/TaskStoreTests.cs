@@ -7,6 +7,7 @@ using Calendar.Services.Email;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.AspNetCore.WebUtilities;
 using Xunit;
 
 namespace Calendar.Tests;
@@ -62,6 +63,183 @@ public sealed class TaskStoreTests
         var saved = await db.Tasks.SingleAsync();
         Assert.Equal(fixture.Creator.Id, saved.CreatorId);
         Assert.Equal(fixture.Creator.Id, saved.AssigneeId);
+    }
+
+    [Fact]
+    public async Task ExistingRegisteredEmail_UsesNormalAssignmentWithoutInvitation()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewEmailRequest(fixture.Assignee.Email.ToUpperInvariant());
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(request);
+
+        await using var db = fixture.CreateDbContext();
+        var task = await db.Tasks.SingleAsync();
+        Assert.Equal(taskId, task.Id);
+        Assert.Equal(fixture.Assignee.Id, task.AssigneeId);
+        Assert.Empty(await db.TaskInvitations.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UnknownEmail_CreatesPendingInvitationWithoutFakeUser()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        int userCount;
+        await using (var before = fixture.CreateDbContext())
+            userCount = await before.Users.CountAsync();
+
+        var taskId = await fixture.CreateStore(fixture.Creator)
+            .CreateAsync(NewEmailRequest("  Anna.New@Example.com  "));
+
+        await using var db = fixture.CreateDbContext();
+        var task = await db.Tasks.SingleAsync();
+        var invitation = await db.TaskInvitations.SingleAsync();
+        Assert.Equal(taskId, task.Id);
+        Assert.Null(task.AssigneeId);
+        Assert.Equal(taskId, invitation.TaskId);
+        Assert.Equal(fixture.Creator.Id, invitation.InviterId);
+        Assert.Equal("Anna.New@Example.com", invitation.RecipientEmail);
+        Assert.Equal("ANNA.NEW@EXAMPLE.COM", invitation.NormalizedRecipientEmail);
+        Assert.Equal(TaskInvitationStatus.Pending, invitation.Status);
+        Assert.True(invitation.ExpiresUtc > invitation.CreatedUtc);
+        Assert.Equal(userCount, await db.Users.CountAsync());
+    }
+
+    [Fact]
+    public async Task MakerSeesInvitedTaskAndInvitationEmailTargetsOnlyRecipient()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        const string invitedEmail = "new.doer@example.com";
+        var store = fixture.CreateStore(fixture.Creator);
+
+        var taskId = await store.CreateAsync(NewEmailRequest(invitedEmail) with { Priority = TaskPriority.Urgent });
+
+        var summary = Assert.Single(await store.LoadCreatedAsync());
+        Assert.Equal(taskId, summary.Id);
+        Assert.Equal(invitedEmail, summary.AssigneeName);
+        Assert.True(summary.IsInvited);
+        var details = await store.LoadDetailsAsync(taskId);
+        Assert.True(details.IsInvited);
+        Assert.Equal(invitedEmail, details.AssigneeName);
+
+        var notification = Assert.Single(fixture.Notifier.CreatedNotifications);
+        var recipient = Assert.Single(notification.Recipients);
+        Assert.Equal(TaskNotificationRole.Doer, recipient.Role);
+        Assert.Equal(invitedEmail, recipient.Email);
+        Assert.Equal(TaskPriority.Urgent, notification.Priority);
+        Assert.Contains("/task-invitation?token=", notification.TaskUrl);
+    }
+
+    [Fact]
+    public async Task SelfAssignmentByEmail_DoesNotCreateInvitationOrEmail()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+
+        await store.CreateAsync(NewEmailRequest(fixture.Creator.Email.ToUpperInvariant()));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(fixture.Creator.Id, (await db.Tasks.SingleAsync()).AssigneeId);
+        Assert.Empty(await db.TaskInvitations.ToListAsync());
+        Assert.Empty(fixture.Notifier.CreatedNotifications);
+    }
+
+    [Fact]
+    public async Task InvitationEmailFailure_DoesNotUndoTaskOrInvitation()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        fixture.Notifier.FailCreated = true;
+        var store = fixture.CreateStore(fixture.Creator);
+
+        var taskId = await store.CreateAsync(NewEmailRequest("delivery.failure@example.com"));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(taskId, (await db.Tasks.SingleAsync()).Id);
+        Assert.Equal(TaskInvitationStatus.Pending, (await db.TaskInvitations.SingleAsync()).Status);
+        Assert.Contains("invitation email could not be sent", store.LastNotice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task MatchingNewUserClaimsInvitationAndReceivesExistingPendingTask()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator)
+            .CreateAsync(NewEmailRequest("future.user@example.com"));
+        var token = InvitationToken(fixture.Notifier.CreatedNotifications.Single().TaskUrl);
+        var service = new TaskInvitationService(new TestDbContextFactory(fixture.Options));
+        var beforeRegistration = await service.InspectAsync(token);
+        Assert.Equal(TaskInvitationAccessStatus.Valid, beforeRegistration.Status);
+        Assert.False(beforeRegistration.AccountExists);
+        var newUser = TestFixture.NewUser("future.user@example.com", "Future User");
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Users.Add(newUser);
+            await db.SaveChangesAsync();
+        }
+
+        var afterRegistration = await service.InspectAsync(token);
+        Assert.True(afterRegistration.AccountExists);
+        var result = await service.ClaimAsync(token, newUser.Id);
+
+        Assert.Equal(TaskInvitationClaimStatus.Success, result.Status);
+        Assert.Equal(taskId, result.TaskId);
+        var assigned = Assert.Single(await fixture.CreateStore(newUser).LoadAssignedAsync());
+        Assert.Equal(taskId, assigned.Id);
+        Assert.Equal(TaskAssignmentStatus.Pending, assigned.AssignmentStatus);
+        await using var verification = fixture.CreateDbContext();
+        Assert.Single(await verification.Tasks.ToListAsync());
+        Assert.Equal(newUser.Id, (await verification.Tasks.SingleAsync()).AssigneeId);
+        Assert.Equal(TaskInvitationStatus.Claimed, (await verification.TaskInvitations.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task DifferentUserCannotClaimAndUsedInvitationCannotCreateDuplicateTask()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator)
+            .CreateAsync(NewEmailRequest("claim.once@example.com"));
+        var token = InvitationToken(fixture.Notifier.CreatedNotifications.Single().TaskUrl);
+        var invitedUser = TestFixture.NewUser("claim.once@example.com", "Claim Once");
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Users.Add(invitedUser);
+            await db.SaveChangesAsync();
+        }
+
+        var service = new TaskInvitationService(new TestDbContextFactory(fixture.Options));
+        Assert.Equal(TaskInvitationClaimStatus.EmailMismatch,
+            (await service.ClaimAsync(token, fixture.Unrelated.Id)).Status);
+        Assert.Equal(TaskInvitationClaimStatus.Success,
+            (await service.ClaimAsync(token, invitedUser.Id)).Status);
+        Assert.Equal(TaskInvitationClaimStatus.Invalid,
+            (await service.ClaimAsync(token, invitedUser.Id)).Status);
+        Assert.Equal(TaskInvitationAccessStatus.Invalid, (await service.InspectAsync(token)).Status);
+
+        await using var verification = fixture.CreateDbContext();
+        Assert.Single(await verification.Tasks.ToListAsync());
+        Assert.Single(await verification.TaskInvitations.ToListAsync());
+        Assert.Equal(taskId, (await verification.TaskInvitations.SingleAsync()).TaskId);
+    }
+
+    [Fact]
+    public async Task InvalidAndExpiredInvitationTokensAreRejected()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await fixture.CreateStore(fixture.Creator).CreateAsync(NewEmailRequest("expired@example.com"));
+        var token = InvitationToken(fixture.Notifier.CreatedNotifications.Single().TaskUrl);
+        var service = new TaskInvitationService(new TestDbContextFactory(fixture.Options));
+
+        Assert.Equal(TaskInvitationAccessStatus.Invalid, (await service.InspectAsync("not-a-token")).Status);
+        await using (var db = fixture.CreateDbContext())
+        {
+            var invitation = await db.TaskInvitations.SingleAsync();
+            invitation.ExpiresUtc = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(TaskInvitationAccessStatus.Expired, (await service.InspectAsync(token)).Status);
+        Assert.Equal(TaskInvitationClaimStatus.Expired,
+            (await service.ClaimAsync(token, fixture.Assignee.Id)).Status);
     }
 
     [Fact]
@@ -183,6 +361,39 @@ public sealed class TaskStoreTests
         var task = Assert.Single(tasks);
         Assert.Equal(taskId, task.Id);
         Assert.Equal(fixture.Assignee.Name, task.AssigneeName);
+    }
+
+    [Fact]
+    public async Task TaskListSummaries_ExposeBoardDragPermissionOnlyToDoer()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        var assigned = Assert.Single(await fixture.CreateStore(fixture.Assignee).LoadAssignedAsync());
+        var created = Assert.Single(await fixture.CreateStore(fixture.Creator).LoadCreatedAsync());
+
+        Assert.Equal(taskId, assigned.Id);
+        Assert.NotEqual(Guid.Empty, assigned.Version);
+        Assert.True(assigned.CanManageWorkStatus);
+        Assert.Equal(taskId, created.Id);
+        Assert.Equal(assigned.Version, created.Version);
+        Assert.False(created.CanManageWorkStatus);
+    }
+
+    [Fact]
+    public async Task SelfAssignedTask_IsBoardDraggableInBothOwnershipViews()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Creator.Id));
+
+        var assigned = Assert.Single(await store.LoadAssignedAsync());
+        var created = Assert.Single(await store.LoadCreatedAsync());
+
+        Assert.Equal(taskId, assigned.Id);
+        Assert.Equal(taskId, created.Id);
+        Assert.True(assigned.CanManageWorkStatus);
+        Assert.True(created.CanManageWorkStatus);
     }
 
     [Fact]
@@ -1413,6 +1624,20 @@ public sealed class TaskStoreTests
         assigneeId,
         DateOnly.FromDateTime(DateTime.Today.AddDays(7)));
 
+    private static CreateLumaTaskRequest NewEmailRequest(string email) => new(
+        "  Prepare launch notes  ",
+        "  Include the final checklist.  ",
+        null,
+        DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
+        TaskPriority.None,
+        email);
+
+    private static string InvitationToken(string invitationUrl)
+    {
+        var uri = new Uri(invitationUrl);
+        return QueryHelpers.ParseQuery(uri.Query)["token"].Single()!;
+    }
+
     private static RequestTaskDeadlineChange NewDeadlineRequest(int daysFromToday = 10) => new(
         DateOnly.FromDateTime(DateTime.Today.AddDays(daysFromToday)),
         "Waiting for the vendor.");
@@ -1490,7 +1715,7 @@ public sealed class TaskStoreTests
                 new TestTaskLinkBuilder(),
                 NullLogger<TaskStore>.Instance);
 
-        private static AppUser NewUser(string email, string name) => new()
+        public static AppUser NewUser(string email, string name) => new()
         {
             Name = name,
             Email = email,
@@ -1526,6 +1751,7 @@ public sealed class TaskStoreTests
     private sealed class TestTaskLinkBuilder : ITaskLinkBuilder
     {
         public string Task(Guid taskId) => $"https://luma.test/tasks?task={taskId:D}";
+        public string Invitation(string token) => $"https://luma.test/task-invitation?token={Uri.EscapeDataString(token)}";
     }
 
     private sealed class RecordingTaskNotifier : ITaskNotifier

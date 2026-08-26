@@ -1,4 +1,5 @@
 @using global::Calendar.Services
+@using global::Calendar.Models
 
 <div class="dialog-backdrop" role="presentation" @onclick="Cancel">
     <section class="event-dialog task-edit-dialog" role="dialog" aria-modal="true"
@@ -7,7 +8,7 @@
             <div>
                 <span class="eyebrow">EDIT TASK</span>
                 <h2 id="task-edit-title">Update task details</h2>
-                <p>Only the title and description can be changed here.</p>
+                <p>Update the title, description, or priority.</p>
             </div>
             <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
         </header>
@@ -25,6 +26,7 @@
                     <small class="field-error">@TitleError</small>
                 }
             </label>
+            <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <label class="field">
                 <span>Description <em>optional</em></span>
                 <textarea rows="5" maxlength="4000" @bind="Description"></textarea>
@@ -48,18 +50,20 @@
     private string Title = string.Empty;
     private string Description = string.Empty;
     private string TitleError = string.Empty;
+    private TaskPriority Priority;
 
     protected override void OnInitialized()
     {
         Title = Details.Title;
         Description = Details.Description;
+        Priority = Details.Priority;
     }
 
     private async Task Submit()
     {
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
         if (TitleError.Length > 0) return;
-        await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(Title.Trim(), Description.Trim(), Details.Version));
+        await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(Title.Trim(), Description.Trim(), Details.Version, Priority));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();

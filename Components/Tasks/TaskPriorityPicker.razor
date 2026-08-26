@@ -1,0 +1,84 @@
+@using global::Calendar.Models
+
+<div class="field task-priority-picker @(OpenUpward ? "open-upward" : null)"
+     @onclick:stopPropagation="true" @onkeydown="HandleKeyDown" @onkeydown:stopPropagation="IsOpen">
+    <span>@Label</span>
+    <button class="task-priority-trigger" type="button" aria-haspopup="listbox"
+            aria-expanded="@IsOpen" aria-controls="@MenuId" @onclick="Toggle">
+        <span class="task-priority-indicator @PriorityClass(Value)" aria-hidden="true"></span>
+        <strong>@PriorityLabel(Value)</strong>
+        <span class="task-priority-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"></path></svg>
+        </span>
+    </button>
+
+    @if (IsOpen)
+    {
+        <button class="task-priority-dismiss-layer" type="button" tabindex="-1"
+                aria-label="Close priority picker" @onclick="Close"></button>
+        <div id="@MenuId" class="task-priority-menu" role="listbox" aria-label="Choose task priority">
+            @foreach (var option in Options)
+            {
+                var selected = option == Value;
+                <button type="button" role="option" aria-selected="@selected"
+                        class="@(selected ? "selected" : null)" @onclick="() => Select(option)">
+                    <span class="task-priority-indicator @PriorityClass(option)" aria-hidden="true"></span>
+                    <span>@PriorityLabel(option)</span>
+                    @if (selected)
+                    {
+                        <svg class="task-priority-check" viewBox="0 0 16 16" aria-hidden="true">
+                            <path d="m3.5 8.2 2.8 2.8 6.2-6.2"></path>
+                        </svg>
+                    }
+                </button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly TaskPriority[] Options =
+        [TaskPriority.None, TaskPriority.Low, TaskPriority.Medium, TaskPriority.High, TaskPriority.Urgent];
+
+    [Parameter] public string Label { get; set; } = "Priority";
+    [Parameter] public TaskPriority Value { get; set; }
+    [Parameter] public EventCallback<TaskPriority> ValueChanged { get; set; }
+    [Parameter] public bool OpenUpward { get; set; }
+
+    private readonly string MenuId = $"task-priority-{Guid.NewGuid():N}";
+    private bool IsOpen;
+
+    public void Close() => IsOpen = false;
+
+    private void Toggle() => IsOpen = !IsOpen;
+
+    private async Task Select(TaskPriority priority)
+    {
+        await ValueChanged.InvokeAsync(priority);
+        IsOpen = false;
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") Close();
+    }
+
+    private static string PriorityLabel(TaskPriority priority) => priority switch
+    {
+        TaskPriority.None => "No priority",
+        TaskPriority.Low => "Low",
+        TaskPriority.Medium => "Medium",
+        TaskPriority.High => "High",
+        TaskPriority.Urgent => "Urgent",
+        _ => "No priority"
+    };
+
+    private static string PriorityClass(TaskPriority priority) => priority switch
+    {
+        TaskPriority.Low => "priority-low",
+        TaskPriority.Medium => "priority-medium",
+        TaskPriority.High => "priority-high",
+        TaskPriority.Urgent => "priority-urgent",
+        _ => "priority-none"
+    };
+}

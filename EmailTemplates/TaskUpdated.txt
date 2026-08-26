@@ -18,6 +18,11 @@ Description
 {{PreviousDescription}}
 → {{UpdatedDescription}}
 {{/DescriptionChanged}}
+{{#PriorityChanged}}
+Priority
+{{PreviousPriority}}
+→ {{UpdatedPriority}}
+{{/PriorityChanged}}
 
 Open task in LUMA: {{TaskUrl}}
 

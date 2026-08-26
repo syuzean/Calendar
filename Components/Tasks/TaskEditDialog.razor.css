@@ -1,5 +1,6 @@
 .task-edit-dialog {
     width: min(570px, 100%);
+    overflow: visible;
 }
 
 .task-edit-dialog .dialog-header p {
@@ -20,6 +21,8 @@
 
 @media (max-width: 620px) {
     .task-edit-dialog {
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
         padding: 21px;
     }
 }

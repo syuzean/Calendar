@@ -156,6 +156,11 @@
     color: #796f83;
 }
 
+.task-detail-status.invited {
+    background: #eee9ff;
+    color: #6844dc;
+}
+
 .task-detail-status.accepted {
     background: #e8f6ef;
     color: #31805d;
@@ -180,6 +185,19 @@
     background: #e5f5ed;
     color: #287554;
 }
+
+.task-detail-priority {
+    border-radius: 8px;
+    padding: 5px 8px;
+    background: #f4f2f6;
+    color: #756e7d;
+    font-size: 8px;
+    font-weight: 800;
+}
+
+.task-detail-priority.medium { background: #edf1fb; color: #536a9a; }
+.task-detail-priority.high { background: #fff1e6; color: #a45c24; }
+.task-detail-priority.urgent { background: #fdebed; color: #b34255; }
 
 .task-deadline-request {
     border: 1px solid #ddd2fa;
