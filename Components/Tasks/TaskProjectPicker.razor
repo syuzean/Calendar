@@ -1,0 +1,94 @@
+@using global::Calendar.Services
+@inject ProjectStore ProjectStore
+
+<div class="field task-project-picker @(OpenUpward ? "open-upward" : null)"
+     @onclick:stopPropagation="true" @onkeydown="HandleKeyDown" @onkeydown:stopPropagation="IsOpen">
+    <span>@Label <em>optional</em></span>
+    <button class="task-project-trigger" type="button" aria-haspopup="listbox"
+            aria-expanded="@IsOpen" aria-controls="@MenuId" @onclick="Toggle">
+        <span class="task-project-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M3.5 6h5l1.6 1.8h6.4v7.7h-13z"></path></svg>
+        </span>
+        <strong>@SelectedLabel</strong>
+        <svg class="task-project-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+    </button>
+
+    @if (IsOpen)
+    {
+        <button class="task-project-dismiss-layer" type="button" tabindex="-1"
+                aria-label="Close project picker" @onclick="Close"></button>
+        <div id="@MenuId" class="task-project-menu" role="listbox" aria-label="Choose a project">
+            <button type="button" role="option" aria-selected="@(Value is null)"
+                    class="@(Value is null ? "selected" : null)" @onclick="() => Select(null)">
+                <span class="task-project-option-icon none" aria-hidden="true">—</span>
+                <span><strong>No project</strong><small>Keep this task independent</small></span>
+                @if (Value is null) { <i aria-hidden="true">✓</i> }
+            </button>
+            @foreach (var project in Projects)
+            {
+                <button type="button" role="option" aria-selected="@(Value == project.Id)"
+                        class="@(Value == project.Id ? "selected" : null)" @onclick="() => Select(project.Id)">
+                    <span class="task-project-option-icon" aria-hidden="true">◇</span>
+                    <span><strong>@project.Name</strong><small>@TaskCountLabel(project.TaskCount)</small></span>
+                    @if (Value == project.Id) { <i aria-hidden="true">✓</i> }
+                </button>
+            }
+            @if (IsLoading)
+            {
+                <span class="task-project-state">Loading projects…</span>
+            }
+            else if (!string.IsNullOrWhiteSpace(LoadError))
+            {
+                <span class="task-project-state error">@LoadError</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "Project";
+    [Parameter] public Guid? Value { get; set; }
+    [Parameter] public EventCallback<Guid?> ValueChanged { get; set; }
+    [Parameter] public bool OpenUpward { get; set; }
+
+    private readonly string MenuId = $"task-project-{Guid.NewGuid():N}";
+    private IReadOnlyList<ProjectSummary> Projects = [];
+    private bool IsOpen;
+    private bool IsLoading = true;
+    private string LoadError = string.Empty;
+    private string SelectedLabel => Value is null
+        ? "No project"
+        : Projects.FirstOrDefault(project => project.Id == Value)?.Name ?? "Project unavailable";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Projects = await ProjectStore.LoadAsync();
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or InvalidOperationException)
+        {
+            LoadError = "Projects could not be loaded.";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    public void Close() => IsOpen = false;
+    private void Toggle() => IsOpen = !IsOpen;
+
+    private async Task Select(Guid? projectId)
+    {
+        await ValueChanged.InvokeAsync(projectId);
+        IsOpen = false;
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") Close();
+    }
+
+    private static string TaskCountLabel(int count) => count == 1 ? "1 task" : $"{count} tasks";
+}

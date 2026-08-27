@@ -1,0 +1,151 @@
+@using global::Calendar.Models
+@using global::Calendar.Services
+@inject TaskStore TaskStore
+
+<section class="project-details-view" aria-label="Project details">
+    <button class="project-back-button" type="button" @onclick="BackRequested"><span aria-hidden="true">‹</span> Back to projects</button>
+
+    @if (IsLoading)
+    {
+        <div class="project-details-state" role="status">Loading project…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="project-details-state error" role="alert">@ErrorMessage</div>
+    }
+    else if (Details is not null)
+    {
+        <header class="project-details-header">
+            <span class="project-details-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5h6l2 2h8v9.5H4z"></path><path d="M4 7.5V5h6l2 2h8v2.5"></path></svg></span>
+            <div class="project-details-heading-copy">
+                <span class="eyebrow">PROJECT</span><h2>@Details.Name</h2>
+                <p>Created by <strong>@Details.CreatedByName</strong> · @Details.CreatedAt.ToLocalTime().ToString("MMM d, yyyy")</p>
+            </div>
+            <div class="project-progress" aria-label="@ProgressLabel">
+                <strong>@TaskCountLabel(Details.TaskCount)</strong>
+                @if (Details.TaskCount > 0) { <small>@Details.DoneTaskCount done</small><span><i style="width:@($"{ProgressPercent}%")"></i></span> }
+            </div>
+        </header>
+
+        <div class="project-description-card"><span>DESCRIPTION</span><p>@(string.IsNullOrWhiteSpace(Details.Description) ? "No description provided." : Details.Description)</p></div>
+
+        <div class="project-task-tools" aria-label="Filter project tasks">
+            <label class="project-task-search"><span aria-hidden="true">⌕</span><input type="search" placeholder="Search tasks…" aria-label="Search project tasks by title" @bind="Search" @bind:event="oninput" @bind:after="ApplyFiltersAsync" /></label>
+            <label><span>Assignee</span><select @bind="Assignee" @bind:after="ApplyFiltersAsync"><option value="">All</option>@foreach (var option in Assignees) { <option value="@option.Id">@option.Name</option> }</select></label>
+            <label><span>Work</span><select @bind="Work" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="ToDo">To Do</option><option value="InProgress">In Progress</option><option value="Done">Done</option></select></label>
+            <label><span>Assignment</span><select @bind="Assignment" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="Pending">Pending</option><option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option></select></label>
+            <label><span>Priority</span><select @bind="Priority" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="None">No priority</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label>
+            <label><span>Deadline</span><select @bind="Deadline" @bind:after="ApplyFiltersAsync"><option value="All">All</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="ThisWeek">This week</option></select></label>
+            <label><span>Sort</span><select @bind="Sort" @bind:after="ApplyFiltersAsync"><option value="DeadlineNearest">Deadline: nearest</option><option value="PriorityHighest">Priority: highest</option><option value="Newest">Newest</option></select></label>
+            @if (HasFilters) { <button type="button" @onclick="ClearFiltersAsync">Clear</button> }
+        </div>
+
+        @if (TasksLoading)
+        {
+            <div class="project-task-state" role="status">Loading project tasks…</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(TasksError))
+        {
+            <div class="project-task-state error" role="alert">@TasksError</div>
+        }
+        else if (Tasks.Count == 0)
+        {
+            <div class="project-empty-tasks">
+                <span aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10M8 2.8h8v3.4H8zM6 5h12a2 2 0 0 1 2 2v13H4V7a2 2 0 0 1 2-2z"></path><path d="m8 13 2.2 2.2L16 9.5"></path></svg></span>
+                <strong>@(HasFilters ? "No project tasks match these filters." : "No tasks in this project yet.")</strong>
+                <small>@(HasFilters ? "Try clearing one or more filters." : "Choose this project when creating or editing a task.")</small>
+            </div>
+        }
+        else
+        {
+            <div class="project-task-list">
+                @foreach (var task in Tasks)
+                {
+                    <button type="button" class="project-task-card" @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
+                        <span class="project-task-main"><strong>@task.Title</strong><small>Assigned to @task.AssigneeName</small></span>
+                        <span class="project-task-badges"><i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i><i class="work @WorkClass(task.WorkStatus)">@WorkLabel(task.WorkStatus)</i><i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited)">@AssignmentLabel(task.AssignmentStatus, task.IsInvited)</i></span>
+                        <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@task.Deadline.ToString("MMM d, yyyy")</time><span class="project-task-arrow" aria-hidden="true">›</span>
+                    </button>
+                }
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public ProjectDetails? Details { get; set; }
+    [Parameter] public bool IsLoading { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public long RefreshKey { get; set; }
+    [Parameter] public EventCallback BackRequested { get; set; }
+    [Parameter] public EventCallback<Guid> OpenTaskRequested { get; set; }
+
+    private IReadOnlyList<RelatedLumaTask> Tasks = [];
+    private IReadOnlyList<AssigneeFilterOption> Assignees = [];
+    private Guid? LoadedProjectId;
+    private long LoadedRefreshKey = -1;
+    private bool TasksLoading;
+    private string TasksError = string.Empty;
+    private string Search = string.Empty;
+    private string Assignee = string.Empty;
+    private string Work = string.Empty;
+    private string Assignment = string.Empty;
+    private string Priority = string.Empty;
+    private string Deadline = nameof(TaskDeadlineFilter.All);
+    private string Sort = nameof(TaskSortOrder.DeadlineNearest);
+
+    private bool HasFilters => !string.IsNullOrWhiteSpace(Search) || Assignee.Length > 0 || Work.Length > 0 || Assignment.Length > 0 || Priority.Length > 0 || Deadline != nameof(TaskDeadlineFilter.All) || Sort != nameof(TaskSortOrder.DeadlineNearest);
+    private int ProgressPercent => Details is { TaskCount: > 0 } ? (int)Math.Round(Details.DoneTaskCount * 100d / Details.TaskCount) : 0;
+    private string ProgressLabel => Details is null ? string.Empty : $"{Details.DoneTaskCount} of {Details.TaskCount} tasks completed";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Details is null || (LoadedProjectId == Details.Id && LoadedRefreshKey == RefreshKey)) return;
+        LoadedProjectId = Details.Id;
+        LoadedRefreshKey = RefreshKey;
+        await LoadTasksAsync(refreshAssignees: true);
+    }
+
+    private Task ApplyFiltersAsync() => LoadTasksAsync(refreshAssignees: false);
+    private async Task ClearFiltersAsync()
+    {
+        Search = Work = Assignment = Priority = Assignee = string.Empty;
+        Deadline = nameof(TaskDeadlineFilter.All); Sort = nameof(TaskSortOrder.DeadlineNearest);
+        await LoadTasksAsync(refreshAssignees: false);
+    }
+
+    private async Task LoadTasksAsync(bool refreshAssignees)
+    {
+        if (Details is null) return;
+        TasksLoading = true; TasksError = string.Empty;
+        try
+        {
+            if (refreshAssignees)
+            {
+                var all = await TaskStore.LoadProjectTasksAsync(Details.Id);
+                Assignees = all.Where(task => task.AssigneeId is not null)
+                    .GroupBy(task => new { Id = task.AssigneeId!.Value, task.AssigneeName })
+                    .Select(group => new AssigneeFilterOption(group.Key.Id, group.Key.AssigneeName))
+                    .OrderBy(option => option.Name).ToArray();
+            }
+            var assigneeId = Guid.TryParse(Assignee, out var parsedAssignee) ? parsedAssignee : (Guid?)null;
+            Tasks = await TaskStore.LoadProjectTasksAsync(Details.Id, new TaskListQuery(
+                Search, Parse<TaskWorkStatus>(Work), Parse<TaskAssignmentStatus>(Assignment), Parse<TaskPriority>(Priority),
+                Enum.TryParse<TaskDeadlineFilter>(Deadline, out var deadline) ? deadline : TaskDeadlineFilter.All,
+                Enum.TryParse<TaskSortOrder>(Sort, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
+                TaskRelationFilter.AllRelated, Details.Id, assigneeId));
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException) { TasksError = exception.Message; }
+        finally { TasksLoading = false; }
+    }
+
+    private static TEnum? Parse<TEnum>(string value) where TEnum : struct, Enum => Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
+    private static string TaskCountLabel(int count) => count == 1 ? "1 task" : $"{count} tasks";
+    private static string PriorityClass(TaskPriority value) => value.ToString().ToLowerInvariant();
+    private static string PriorityLabel(TaskPriority value) => value == TaskPriority.None ? "No priority" : value.ToString();
+    private static string WorkClass(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "in-progress" : value.ToString().ToLowerInvariant();
+    private static string WorkLabel(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "In Progress" : value == TaskWorkStatus.ToDo ? "To Do" : "Done";
+    private static string AssignmentClass(TaskAssignmentStatus value, bool invited) => invited ? "invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "requested" : value.ToString().ToLowerInvariant();
+    private static string AssignmentLabel(TaskAssignmentStatus value, bool invited) => invited ? "Invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "Deadline requested" : value.ToString();
+    private sealed record AssigneeFilterOption(Guid Id, string Name);
+}

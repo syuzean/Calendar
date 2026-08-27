@@ -144,6 +144,17 @@
     font-weight: 800;
 }
 
+.task-detail-project {
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border-radius: 7px;
+    background: #eee9ff;
+    color: #6844dc;
+    font-size: 13px;
+}
+
 .task-detail-status {
     border-radius: 8px;
     padding: 5px 8px;

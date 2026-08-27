@@ -33,7 +33,8 @@ public sealed record TaskCreatedNotification(
     DateOnly Deadline,
     TaskPriority Priority,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskAcceptedNotification(
     string TaskTitle,
@@ -42,7 +43,8 @@ public sealed record TaskAcceptedNotification(
     DateOnly Deadline,
     DateTime AcceptedAt,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeRequestedNotification(
     string TaskTitle,
@@ -53,7 +55,8 @@ public sealed record TaskDeadlineChangeRequestedNotification(
     string Comment,
     DateTime RequestedAt,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeApprovedNotification(
     string TaskTitle,
@@ -64,7 +67,8 @@ public sealed record TaskDeadlineChangeApprovedNotification(
     string Comment,
     DateTime ApprovedAt,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeDeclinedNotification(
     string TaskTitle,
@@ -75,7 +79,8 @@ public sealed record TaskDeadlineChangeDeclinedNotification(
     string Comment,
     DateTime DeclinedAt,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskContentChanges(
     bool TitleChanged,
@@ -86,7 +91,10 @@ public sealed record TaskContentChanges(
     string UpdatedDescription,
     bool PriorityChanged,
     TaskPriority PreviousPriority,
-    TaskPriority UpdatedPriority);
+    TaskPriority UpdatedPriority,
+    bool ProjectChanged = false,
+    string PreviousProject = "",
+    string UpdatedProject = "");
 
 public sealed record TaskUpdatedNotification(
     string TaskTitle,
@@ -95,7 +103,8 @@ public sealed record TaskUpdatedNotification(
     DateOnly Deadline,
     TaskContentChanges Changes,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskWorkStatusChangedNotification(
     string TaskTitle,
@@ -105,7 +114,8 @@ public sealed record TaskWorkStatusChangedNotification(
     TaskWorkStatus NewStatus,
     DateOnly Deadline,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");
 
 public sealed record TaskCommentAddedNotification(
     string TaskTitle,
@@ -113,4 +123,5 @@ public sealed record TaskCommentAddedNotification(
     string CommentText,
     TaskNotificationRole AuthorRole,
     string TaskUrl,
-    IReadOnlyList<TaskNotificationRecipient> Recipients);
+    IReadOnlyList<TaskNotificationRecipient> Recipients,
+    string ProjectName = "");

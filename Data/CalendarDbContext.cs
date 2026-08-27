@@ -13,6 +13,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<LumaTask> Tasks => Set<LumaTask>();
     public DbSet<LumaTaskComment> TaskComments => Set<LumaTaskComment>();
     public DbSet<TaskInvitation> TaskInvitations => Set<TaskInvitation>();
+    public DbSet<LumaProject> Projects => Set<LumaProject>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,6 +99,11 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 .WithMany(user => user.AssignedTasks)
                 .HasForeignKey(task => task.AssigneeId)
                 .OnDelete(DeleteBehavior.NoAction);
+            entity.HasIndex(task => task.ProjectId);
+            entity.HasOne(task => task.Project)
+                .WithMany(project => project.Tasks)
+                .HasForeignKey(task => task.ProjectId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<LumaTaskComment>(entity =>
@@ -137,6 +143,19 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(invitation => invitation.ClaimedByUser)
                 .WithMany(user => user.ClaimedTaskInvitations)
                 .HasForeignKey(invitation => invitation.ClaimedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LumaProject>(entity =>
+        {
+            entity.ToTable("Projects");
+            entity.Property(project => project.Name).HasMaxLength(120);
+            entity.Property(project => project.Description).HasMaxLength(2000);
+            entity.Property(project => project.Version).IsConcurrencyToken();
+            entity.HasIndex(project => project.Name);
+            entity.HasOne(project => project.CreatedByUser)
+                .WithMany(user => user.CreatedProjects)
+                .HasForeignKey(project => project.CreatedByUserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
     }

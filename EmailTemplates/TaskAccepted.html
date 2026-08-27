@@ -22,6 +22,7 @@
               <h1 style="margin:0 0 18px;font-size:24px;line-height:1.25;color:#17151f">{{TaskTitle}}</h1>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;line-height:1.55;color:#5f5966">
                 <tr><td width="105" style="padding:3px 0;font-weight:700;color:#2d2933">Task Doer</td><td style="padding:3px 0">{{TaskDoer}}</td></tr>
+                {{#HasProject}}<tr><td width="105" style="padding:3px 0;font-weight:700;color:#2d2933">Project</td><td style="padding:3px 0">{{Project}}</td></tr>{{/HasProject}}
                 <tr><td width="105" style="padding:3px 0;font-weight:700;color:#2d2933">Deadline</td><td style="padding:3px 0">{{Deadline}}</td></tr>
                 <tr><td width="105" style="padding:3px 0;font-weight:700;color:#2d2933">Accepted</td><td style="padding:3px 0">{{AcceptedAt}}</td></tr>
               </table>

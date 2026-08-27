@@ -24,7 +24,8 @@ public sealed record TaskCreatedTemplateData(
     string TaskDoer,
     DateOnly Deadline,
     TaskPriority Priority,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskAcceptedTemplateData(
     string RecipientName,
@@ -34,7 +35,8 @@ public sealed record TaskAcceptedTemplateData(
     string TaskDoer,
     DateOnly Deadline,
     DateTime AcceptedAt,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeRequestedTemplateData(
     string RecipientName,
@@ -46,7 +48,8 @@ public sealed record TaskDeadlineChangeRequestedTemplateData(
     DateOnly RequestedDeadline,
     string Comment,
     DateTime RequestedAt,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeApprovedTemplateData(
     string RecipientName,
@@ -58,7 +61,8 @@ public sealed record TaskDeadlineChangeApprovedTemplateData(
     DateOnly ApprovedDeadline,
     string Comment,
     DateTime ApprovedAt,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskDeadlineChangeDeclinedTemplateData(
     string RecipientName,
@@ -70,7 +74,8 @@ public sealed record TaskDeadlineChangeDeclinedTemplateData(
     DateOnly DeclinedDeadline,
     string Comment,
     DateTime DeclinedAt,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskUpdatedTemplateData(
     string RecipientName,
@@ -88,7 +93,11 @@ public sealed record TaskUpdatedTemplateData(
     bool PriorityChanged,
     string PreviousPriority,
     string UpdatedPriority,
-    string TaskUrl);
+    bool ProjectChanged,
+    string PreviousProject,
+    string UpdatedProject,
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskWorkStatusChangedTemplateData(
     string RecipientName,
@@ -100,7 +109,8 @@ public sealed record TaskWorkStatusChangedTemplateData(
     string PreviousStatus,
     string NewStatus,
     DateOnly Deadline,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");
 
 public sealed record TaskCommentAddedTemplateData(
     string RecipientName,
@@ -108,4 +118,5 @@ public sealed record TaskCommentAddedTemplateData(
     string TaskTitle,
     string CommentAuthor,
     string CommentText,
-    string TaskUrl);
+    string TaskUrl,
+    string ProjectName = "");

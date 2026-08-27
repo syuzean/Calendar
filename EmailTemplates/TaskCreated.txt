@@ -11,9 +11,10 @@ Description:
 {{/Description}}
 Task Maker: {{TaskMaker}}
 Task Doer: {{TaskDoer}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 Deadline: {{Deadline}}
-{{#Priority}}Priority: {{Priority}}
-{{/Priority}}
+Priority: {{Priority}}
 
 Open task in LUMA: {{TaskUrl}}
 

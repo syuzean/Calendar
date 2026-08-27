@@ -149,6 +149,28 @@ public sealed class TaskEmailNotifierTests
         Assert.DoesNotContain("Description", message.PlainTextBody);
     }
 
+    [Fact]
+    public async Task TaskUpdated_RendersProjectChangeForDoer()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+        var notification = UpdatedNotification(BothRecipients()) with
+        {
+            Changes = new TaskContentChanges(
+                false, "", "", false, "", "", false, TaskPriority.None, TaskPriority.None,
+                true, "UNIAP", "LUMA Calendar")
+        };
+
+        await notifier.NotifyUpdatedAsync(notification);
+
+        var message = Assert.Single(sender.Messages);
+        Assert.Equal("doer@luma.test", message.RecipientAddress);
+        Assert.Contains("Project", message.PlainTextBody);
+        Assert.Contains("UNIAP", message.PlainTextBody);
+        Assert.Contains("LUMA Calendar", message.HtmlBody);
+        Assert.Contains("UNIAP\n→ LUMA Calendar", message.PlainTextBody);
+    }
+
     [Theory]
     [InlineData(TaskWorkStatus.InProgress, "started", "In Progress")]
     [InlineData(TaskWorkStatus.Done, "completed", "Done")]
@@ -183,6 +205,72 @@ public sealed class TaskEmailNotifierTests
         Assert.Contains("A useful comment", message.PlainTextBody);
         Assert.Contains("Comment Author", message.HtmlBody);
         Assert.Contains("Open task in LUMA", message.HtmlBody);
+    }
+
+    [Fact]
+    public async Task Project_IsIncludedAcrossExistingTaskTemplates()
+    {
+        const string project = "LUMA Calendar";
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+        var recipients = BothRecipients();
+
+        await notifier.NotifyCreatedAsync(CreatedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyAcceptedAsync(AcceptedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyDeadlineChangeRequestedAsync(DeadlineRequestedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyDeadlineChangeApprovedAsync(DeadlineApprovedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyDeadlineChangeDeclinedAsync(DeadlineDeclinedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyUpdatedAsync(UpdatedNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyWorkStatusChangedAsync(WorkStatusNotification(recipients) with { ProjectName = project });
+        await notifier.NotifyCommentAddedAsync(CommentNotification(TaskNotificationRole.Maker, recipients) with { ProjectName = project });
+
+        Assert.Equal(8, sender.Messages.Count);
+        Assert.All(sender.Messages, message =>
+        {
+            Assert.Contains("Project: LUMA Calendar", message.PlainTextBody);
+            Assert.Contains("LUMA Calendar", message.HtmlBody);
+        });
+    }
+
+    [Fact]
+    public async Task TaskCreated_OmitsProjectRowWhenTaskHasNoProject()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+
+        await notifier.NotifyCreatedAsync(CreatedNotification(BothRecipients()));
+
+        var message = Assert.Single(sender.Messages);
+        Assert.DoesNotContain("Project:", message.PlainTextBody);
+        Assert.DoesNotContain(">Project<", message.HtmlBody);
+        Assert.Contains("Task Maker: Maker", message.PlainTextBody);
+        Assert.Contains("Task Doer: Doer", message.PlainTextBody);
+        Assert.Contains("Deadline:", message.PlainTextBody);
+        Assert.Contains("Priority: High", message.PlainTextBody);
+    }
+
+    [Fact]
+    public async Task NoProject_IsOmittedAcrossExistingTaskTemplates()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+        var recipients = BothRecipients();
+
+        await notifier.NotifyCreatedAsync(CreatedNotification(recipients));
+        await notifier.NotifyAcceptedAsync(AcceptedNotification(recipients));
+        await notifier.NotifyDeadlineChangeRequestedAsync(DeadlineRequestedNotification(recipients));
+        await notifier.NotifyDeadlineChangeApprovedAsync(DeadlineApprovedNotification(recipients));
+        await notifier.NotifyDeadlineChangeDeclinedAsync(DeadlineDeclinedNotification(recipients));
+        await notifier.NotifyUpdatedAsync(UpdatedNotification(recipients));
+        await notifier.NotifyWorkStatusChangedAsync(WorkStatusNotification(recipients));
+        await notifier.NotifyCommentAddedAsync(CommentNotification(TaskNotificationRole.Maker, recipients));
+
+        Assert.Equal(8, sender.Messages.Count);
+        Assert.All(sender.Messages, message =>
+        {
+            Assert.DoesNotContain("Project:", message.PlainTextBody);
+            Assert.DoesNotContain(">Project<", message.HtmlBody);
+        });
     }
 
     [Fact]

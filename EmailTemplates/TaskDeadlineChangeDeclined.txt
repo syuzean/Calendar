@@ -5,6 +5,8 @@ Hi {{RecipientName}},
 {{TaskMaker}} declined your deadline-change request.
 
 {{TaskTitle}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 Current deadline: {{CurrentDeadline}}
 Requested deadline: {{RequestedDeadline}}
 {{#Comment}}

@@ -3,6 +3,9 @@ LUMA TASKS
 Hi {{RecipientName}},
 
 {{CommentAuthor}} added a comment to "{{TaskTitle}}".
+{{#HasProject}}
+Project: {{Project}}
+{{/HasProject}}
 
 {{CommentText}}
 

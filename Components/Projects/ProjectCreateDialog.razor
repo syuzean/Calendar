@@ -1,0 +1,68 @@
+@using global::Calendar.Services
+
+<div class="dialog-backdrop" role="presentation" @onclick="Cancel">
+    <section class="event-dialog project-create-dialog" role="dialog" aria-modal="true"
+             aria-labelledby="project-create-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <header class="dialog-header">
+            <div>
+                <span class="eyebrow">NEW PROJECT</span>
+                <h2 id="project-create-title">Create a project</h2>
+                <p>Start a shared workspace for organizing work.</p>
+            </div>
+            <button class="icon-button" type="button" aria-label="Close create project dialog" @onclick="Cancel">×</button>
+        </header>
+
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="auth-error" role="alert">@ErrorMessage</div>
+            }
+
+            <label class="field title-field">
+                <span>Project name</span>
+                <input autofocus maxlength="120" placeholder="e.g. Website launch"
+                       @bind="Name" @bind:event="oninput" />
+                @if (!string.IsNullOrWhiteSpace(NameError))
+                {
+                    <small class="field-error">@NameError</small>
+                }
+            </label>
+
+            <label class="field">
+                <span>Description <em>optional</em></span>
+                <textarea rows="5" maxlength="2000" placeholder="What is this project about?"
+                          @bind="Description"></textarea>
+            </label>
+
+            <div class="dialog-actions">
+                <span class="action-spacer"></span>
+                <button class="secondary-button" type="button" disabled="@IsSubmitting" @onclick="Cancel">Cancel</button>
+                <button class="primary-button" type="submit" disabled="@IsSubmitting">
+                    @(IsSubmitting ? "Creating…" : "Create project")
+                </button>
+            </div>
+        </form>
+    </section>
+</div>
+
+@code {
+    [Parameter] public bool IsSubmitting { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public EventCallback CancelRequested { get; set; }
+    [Parameter] public EventCallback<CreateProjectRequest> Created { get; set; }
+
+    private string Name = string.Empty;
+    private string Description = string.Empty;
+    private string NameError = string.Empty;
+
+    private async Task Submit()
+    {
+        NameError = string.IsNullOrWhiteSpace(Name) ? "Give your project a name." : string.Empty;
+        if (NameError.Length > 0) return;
+        await Created.InvokeAsync(new CreateProjectRequest(Name.Trim(), Description.Trim()));
+    }
+
+    private Task Cancel() => CancelRequested.InvokeAsync();
+    private Task HandleKeyDown(KeyboardEventArgs args) =>
+        args.Key == "Escape" && !IsSubmitting ? Cancel() : Task.CompletedTask;
+}

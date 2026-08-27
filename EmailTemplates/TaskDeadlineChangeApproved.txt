@@ -5,6 +5,8 @@ Hi {{RecipientName}},
 {{TaskMaker}} approved your deadline-change request.
 
 {{TaskTitle}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 Previous deadline: {{CurrentDeadline}}
 Approved deadline: {{RequestedDeadline}}
 {{#Comment}}

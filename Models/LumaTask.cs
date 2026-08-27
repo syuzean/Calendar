@@ -7,6 +7,7 @@ public sealed class LumaTask
     public string Description { get; set; } = string.Empty;
     public Guid CreatorId { get; set; }
     public Guid? AssigneeId { get; set; }
+    public Guid? ProjectId { get; set; }
     public DateOnly Deadline { get; set; }
     public DateTime CreatedAt { get; set; }
     public TaskAssignmentStatus AssignmentStatus { get; set; } = TaskAssignmentStatus.Pending;
@@ -19,6 +20,7 @@ public sealed class LumaTask
     public Guid Version { get; set; } = Guid.NewGuid();
     public AppUser? Creator { get; set; }
     public AppUser? Assignee { get; set; }
+    public LumaProject? Project { get; set; }
     public TaskInvitation? Invitation { get; set; }
     public ICollection<LumaTaskComment> Comments { get; set; } = [];
 }

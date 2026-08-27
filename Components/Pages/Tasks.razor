@@ -3,7 +3,9 @@
 @attribute [Authorize]
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject TaskStore TaskStore
+@inject ProjectStore ProjectStore
 @inject IJSRuntime JS
+@using global::Calendar.Components.Projects
 @using global::Calendar.Components.Tasks
 @using global::Calendar.Models
 @using global::Calendar.Services
@@ -37,9 +39,9 @@
                     <span class="eyebrow">WORKSPACE</span>
                     <h1>Tasks</h1>
                 </div>
-                <button class="primary-button tasks-create-button" type="button" @onclick="OpenCreateTask">
+                <button class="primary-button tasks-create-button" type="button" @onclick="OpenPrimaryCreate">
                     <span aria-hidden="true">+</span>
-                    Create task
+                    @(ActiveTab == TaskListTab.Projects ? "Create project" : "Create task")
                 </button>
             </div>
         </header>
@@ -49,7 +51,7 @@
             <div class="tasks-feedback" role="status">
                 <span aria-hidden="true">✓</span>
                 <div>
-                    <strong>Task created</strong>
+                    <strong>@FeedbackTitle</strong>
                     <small>@FeedbackMessage</small>
                 </div>
                 <button type="button" aria-label="Dismiss message" @onclick="DismissFeedback">×</button>
@@ -61,62 +63,135 @@
             <div class="tasks-invitation-error" role="alert">@TaskInvitationError</div>
         }
 
-        <section class="tasks-surface" aria-label="Task lists">
+        <section class="tasks-surface" aria-label="Tasks and projects workspace">
             <div class="tasks-workspace">
                 <div class="task-view-bar">
-                    <div class="task-tabs" role="tablist" aria-label="Task ownership view">
-                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Assigned)"
-                                class="@(ActiveTab == TaskListTab.Assigned ? "active" : null)" @onclick="ShowAssignedTasks">
-                            My Tasks <span>@AssignedTasks.Count</span>
+                    <div class="task-tabs" role="tablist" aria-label="Tasks workspace view">
+                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Tasks)"
+                                class="@(ActiveTab == TaskListTab.Tasks ? "active" : null)" @onclick="ShowTasks">
+                            Tasks <span>@RelatedTasks.Count</span>
                         </button>
-                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Created)"
-                                class="@(ActiveTab == TaskListTab.Created ? "active" : null)" @onclick="ShowCreatedTasks">
-                            Created by me <span>@CreatedTasks.Count</span>
+                        <button type="button" role="tab" aria-selected="@(ActiveTab == TaskListTab.Projects)"
+                                class="@(ActiveTab == TaskListTab.Projects ? "active" : null)" @onclick="ShowProjects">
+                            Projects <span>@Projects.Count</span>
                         </button>
                     </div>
-                    <div class="task-presentation-switch" role="group" aria-label="Task presentation">
-                        <button type="button" class="@(Presentation == TaskPresentation.List ? "active" : null)"
-                                aria-pressed="@(Presentation == TaskPresentation.List)" @onclick="ShowList">List</button>
-                        <button type="button" class="@(Presentation == TaskPresentation.Board ? "active" : null)"
-                                aria-pressed="@(Presentation == TaskPresentation.Board)" @onclick="ShowBoard">Board</button>
-                    </div>
-                </div>
-
-                <div class="task-list-tools" aria-label="Search, filter, and sort tasks">
-                    <label class="task-search">
-                        <span aria-hidden="true">⌕</span>
-                        <input type="search" placeholder="Search tasks…" aria-label="Search tasks by title"
-                               @bind="SearchText" @bind:event="oninput" @bind:after="ApplyFiltersAsync" />
-                    </label>
-                    <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
-                        <option value="">All</option><option value="ToDo">To Do</option>
-                        <option value="InProgress">In Progress</option><option value="Done">Done</option>
-                    </select></label>
-                    <label><span>Assignment</span><select @bind="AssignmentStatusFilter" @bind:after="ApplyFiltersAsync">
-                        <option value="">All</option><option value="Pending">Pending</option>
-                        <option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option>
-                    </select></label>
-                    <label><span>Priority</span><select @bind="PriorityFilter" @bind:after="ApplyFiltersAsync">
-                        <option value="">All</option><option value="None">No priority</option>
-                        <option value="Low">Low</option><option value="Medium">Medium</option>
-                        <option value="High">High</option><option value="Urgent">Urgent</option>
-                    </select></label>
-                    <label><span>Deadline</span><select @bind="DeadlineFilter" @bind:after="ApplyFiltersAsync">
-                        <option value="All">All</option><option value="Overdue">Overdue</option>
-                        <option value="Today">Today</option><option value="ThisWeek">This week</option>
-                    </select></label>
-                    <label><span>Sort</span><select @bind="SortOrder" @bind:after="ApplyFiltersAsync">
-                        <option value="DeadlineNearest">Deadline: nearest</option>
-                        <option value="PriorityHighest">Priority: highest</option>
-                        <option value="Newest">Newest</option>
-                    </select></label>
-                    @if (HasActiveFilters)
+                    @if (ActiveTab != TaskListTab.Projects)
                     {
-                        <button class="clear-task-filters" type="button" @onclick="ClearFiltersAsync">Clear filters</button>
+                        <div class="task-presentation-switch" role="group" aria-label="Task presentation">
+                            <button type="button" class="@(Presentation == TaskPresentation.List ? "active" : null)"
+                                    aria-pressed="@(Presentation == TaskPresentation.List)" @onclick="ShowList">List</button>
+                            <button type="button" class="@(Presentation == TaskPresentation.Board ? "active" : null)"
+                                    aria-pressed="@(Presentation == TaskPresentation.Board)" @onclick="ShowBoard">Board</button>
+                        </div>
                     }
                 </div>
 
-                @if (IsLoading)
+                @if (ActiveTab != TaskListTab.Projects)
+                {
+                    <div class="task-list-tools" aria-label="Search, filter, and sort tasks">
+                        <label class="task-search">
+                            <span aria-hidden="true">⌕</span>
+                            <input type="search" placeholder="Search tasks…" aria-label="Search tasks by title"
+                                   @bind="SearchText" @bind:event="oninput" @bind:after="ApplyFiltersAsync" />
+                        </label>
+                        <label><span>Relation</span><select @bind="RelationFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="AllRelated">All related</option><option value="AssignedToMe">Assigned to me</option>
+                            <option value="AssignedByMe">Assigned by me</option>
+                        </select></label>
+                        <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="">All</option><option value="ToDo">To Do</option>
+                            <option value="InProgress">In Progress</option><option value="Done">Done</option>
+                        </select></label>
+                        <label><span>Assignment</span><select @bind="AssignmentStatusFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="">All</option><option value="Pending">Pending</option>
+                            <option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option>
+                        </select></label>
+                        <label><span>Priority</span><select @bind="PriorityFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="">All</option><option value="None">No priority</option>
+                            <option value="Low">Low</option><option value="Medium">Medium</option>
+                            <option value="High">High</option><option value="Urgent">Urgent</option>
+                        </select></label>
+                        <label><span>Deadline</span><select @bind="DeadlineFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="All">All</option><option value="Overdue">Overdue</option>
+                            <option value="Today">Today</option><option value="ThisWeek">This week</option>
+                        </select></label>
+                        <label><span>Sort</span><select @bind="SortOrder" @bind:after="ApplyFiltersAsync">
+                            <option value="DeadlineNearest">Deadline: nearest</option>
+                            <option value="PriorityHighest">Priority: highest</option>
+                            <option value="Newest">Newest</option>
+                        </select></label>
+                        @if (HasActiveFilters)
+                        {
+                            <button class="clear-task-filters" type="button" @onclick="ClearFiltersAsync">Clear filters</button>
+                        }
+                    </div>
+                }
+
+                @if (ActiveTab == TaskListTab.Projects)
+                {
+                    @if (ShowProjectDetails)
+                    {
+                        <ProjectDetailsView Details="@SelectedProject" IsLoading="@IsProjectDetailsLoading"
+                                            ErrorMessage="@ProjectDetailsError" RefreshKey="@ProjectTasksRefreshKey"
+                                            OpenTaskRequested="OpenTaskAsync" BackRequested="CloseProjectDetails" />
+                    }
+                    else
+                    {
+                        <div class="project-list-tools" aria-label="Search projects">
+                            <label class="project-search">
+                                <span aria-hidden="true">⌕</span>
+                                <input type="search" placeholder="Search projects…" aria-label="Search projects by name"
+                                       @bind="ProjectSearchText" @bind:event="oninput" @bind:after="ApplyProjectSearchAsync" />
+                            </label>
+                            <span>Shared projects are visible to every signed-in LUMA user.</span>
+                        </div>
+
+                        @if (IsProjectsLoading)
+                        {
+                            <div class="tasks-loading" role="status">
+                                <span aria-hidden="true"></span>
+                                <strong>Loading projects…</strong>
+                            </div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(ProjectLoadError))
+                        {
+                            <div class="tasks-load-error" role="alert">
+                                <strong>Projects could not be loaded</strong>
+                                <p>@ProjectLoadError</p>
+                            </div>
+                        }
+                        else if (Projects.Count == 0)
+                        {
+                            <div class="projects-empty">
+                                <span aria-hidden="true">◇</span>
+                                <strong>@(string.IsNullOrWhiteSpace(ProjectSearchText) ? "No projects yet." : "No projects match your search.")</strong>
+                                <small>@(string.IsNullOrWhiteSpace(ProjectSearchText) ? "Create the first shared project workspace." : "Try a different project name.")</small>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="project-list">
+                                @foreach (var project in Projects)
+                                {
+                                    <button type="button" class="project-list-card" @onclick="() => OpenProjectAsync(project.Id)">
+                                        <span class="project-card-mark" aria-hidden="true">
+                                            <svg viewBox="0 0 24 24"><path d="M4 7.5h6l2 2h8v9.5H4z"></path><path d="M4 7.5V5h6l2 2h8v2.5"></path></svg>
+                                        </span>
+                                        <span class="project-card-copy">
+                                            <strong>@project.Name</strong>
+                                            <small>@(string.IsNullOrWhiteSpace(project.Description) ? "No description" : project.Description)</small>
+                                            <span>Created by <b>@project.CreatedByName</b></span>
+                                            <span class="project-card-count">@ProjectCountLabel(project)</span>
+                                        </span>
+                                        <span class="project-card-arrow" aria-hidden="true">›</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    }
+                }
+                else if (IsLoading)
                 {
                     <div class="tasks-loading" role="status">
                         <span aria-hidden="true"></span>
@@ -161,7 +236,11 @@
                                                     title="@(task.CanDrag ? "Drag to the next work stage" : "Open task details")"
                                                     @onclick="() => OpenTaskAsync(task.Id)">
                                                 <strong>@task.Title</strong>
-                                                <span class="task-board-person">@task.PersonLabel <b>@task.PersonName</b></span>
+                                                <span class="task-board-person">@task.RelationshipLabel</span>
+                                                @if (!string.IsNullOrWhiteSpace(task.ProjectName))
+                                                {
+                                                    <span class="task-project-chip">◇ @task.ProjectName</span>
+                                                }
                                                 <span class="task-board-card-meta">
                                                     <span class="task-priority-badge @PriorityClass(task.Priority)">
                                                         @if (task.Priority != TaskPriority.None) { <i aria-hidden="true">●</i> }
@@ -188,60 +267,29 @@
                         <div class="task-board-message" role="status">@BoardNotice</div>
                     }
                 }
-                else if (ActiveTab == TaskListTab.Assigned)
-                {
-                    <div role="tabpanel" class="task-panel" aria-label="My Tasks">
-                        @if (AssignedTasks.Count == 0)
-                        {
-                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "No tasks assigned to you yet.")" />
-                        }
-                        else
-                        {
-                            <div class="task-list">
-                                @foreach (var task in AssignedTasks)
-                                {
-                                    var deadlineClass = DeadlineClass(task.Deadline);
-                                    <button type="button" class="task-list-card @deadlineClass" @onclick="() => OpenTaskAsync(task.Id)">
-                                        <span class="task-card-mark" aria-hidden="true">✓</span>
-                                        <span class="task-card-copy">
-                                            <strong>@task.Title</strong>
-                                            <span class="task-card-meta">
-                                                <small>Created by <b>@task.CreatorName</b></small>
-                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus)">@StatusLabel(task.AssignmentStatus)</span>
-                                                <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
-                                                <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
-                                            </span>
-                                        </span>
-                                        <span class="task-card-deadline @deadlineClass">
-                                            <small>Deadline</small>
-                                            <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
-                                        </span>
-                                        <span class="task-card-arrow" aria-hidden="true">›</span>
-                                    </button>
-                                }
-                            </div>
-                        }
-                    </div>
-                }
                 else
                 {
-                    <div role="tabpanel" class="task-panel" aria-label="Created by me">
-                        @if (CreatedTasks.Count == 0)
+                    <div role="tabpanel" class="task-panel" aria-label="Related Tasks">
+                        @if (RelatedTasks.Count == 0)
                         {
-                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "You haven't created any tasks yet.")" />
+                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "No tasks related to you yet.")" />
                         }
                         else
                         {
                             <div class="task-list">
-                                @foreach (var task in CreatedTasks)
+                                @foreach (var task in RelatedTasks)
                                 {
                                     var deadlineClass = DeadlineClass(task.Deadline);
                                     <button type="button" class="task-list-card @deadlineClass" @onclick="() => OpenTaskAsync(task.Id)">
-                                        <span class="task-card-mark created" aria-hidden="true">↗</span>
+                                        <span class="task-card-mark @RelationshipClass(task)" aria-hidden="true">@RelationshipMark(task)</span>
                                         <span class="task-card-copy">
                                             <strong>@task.Title</strong>
                                             <span class="task-card-meta">
-                                                <small>Assigned to <b>@task.AssigneeName</b></small>
+                                                <small>@RelationshipLabel(task)</small>
+                                                @if (!string.IsNullOrWhiteSpace(task.ProjectName))
+                                                {
+                                                    <span class="task-project-chip">◇ @task.ProjectName</span>
+                                                }
                                                 <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited)">@StatusLabel(task.AssignmentStatus, task.IsInvited)</span>
                                                 <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
                                                 <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
@@ -266,6 +314,12 @@
 @if (ShowCreateTask)
 {
     <TaskCreateDialog CancelRequested="CloseCreateTask" Created="HandleTaskCreated" ErrorMessage="@OperationError" />
+}
+
+@if (ShowCreateProject)
+{
+    <ProjectCreateDialog CancelRequested="CloseCreateProject" Created="HandleProjectCreated"
+                         IsSubmitting="@IsCreatingProject" ErrorMessage="@ProjectOperationError" />
 }
 
 @if (ShowTaskDetails)
@@ -301,6 +355,7 @@
     [SupplyParameterFromQuery(Name = "taskInvitationError")] public string? TaskInvitationError { get; set; }
 
     private string CurrentUserName = "User";
+    private string FeedbackTitle = string.Empty;
     private string FeedbackMessage = string.Empty;
     private string OperationError = string.Empty;
     private string LoadError = string.Empty;
@@ -309,6 +364,19 @@
     private string DetailsNotice = string.Empty;
     private string DeadlineRequestError = string.Empty;
     private bool ShowCreateTask;
+    private bool ShowCreateProject;
+    private bool IsCreatingProject;
+    private string ProjectOperationError = string.Empty;
+    private string ProjectLoadError = string.Empty;
+    private string ProjectDetailsError = string.Empty;
+    private bool IsProjectsLoading = true;
+    private bool ShowProjectDetails;
+    private bool IsProjectDetailsLoading;
+    private string ProjectSearchText = string.Empty;
+    private IReadOnlyList<ProjectSummary> Projects = [];
+    private ProjectDetails? SelectedProject;
+    private long ProjectLoadGeneration;
+    private long ProjectTasksRefreshKey;
     private bool ShowTaskDetails;
     private bool IsLoading = true;
     private bool IsDetailsLoading;
@@ -322,9 +390,8 @@
     private string TaskEditError = string.Empty;
     private string BoardError = string.Empty;
     private string BoardNotice = string.Empty;
-    private TaskListTab ActiveTab = TaskListTab.Assigned;
-    private IReadOnlyList<AssignedLumaTask> AssignedTasks = [];
-    private IReadOnlyList<CreatedLumaTask> CreatedTasks = [];
+    private TaskListTab ActiveTab = TaskListTab.Tasks;
+    private IReadOnlyList<RelatedLumaTask> RelatedTasks = [];
     private LumaTaskDetails? SelectedTask;
     private TaskPresentation Presentation = TaskPresentation.List;
     private DotNetObjectReference<Tasks>? BoardDragReference;
@@ -334,6 +401,7 @@
     private string WorkStatusFilter = string.Empty;
     private string AssignmentStatusFilter = string.Empty;
     private string PriorityFilter = string.Empty;
+    private string RelationFilter = nameof(TaskRelationFilter.AllRelated);
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
@@ -343,6 +411,7 @@
         WorkStatusFilter.Length > 0 ||
         AssignmentStatusFilter.Length > 0 ||
         PriorityFilter.Length > 0 ||
+        RelationFilter != nameof(TaskRelationFilter.AllRelated) ||
         DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
         SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
@@ -362,7 +431,7 @@
     {
         var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         CurrentUserName = principal.Identity?.Name ?? "User";
-        await LoadTasksAsync();
+        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync());
         if (LinkedTaskId is not null)
             await OpenTaskAsync(LinkedTaskId.Value);
     }
@@ -376,9 +445,18 @@
 
     private void OpenCreateTask()
     {
+        FeedbackTitle = string.Empty;
         FeedbackMessage = string.Empty;
         OperationError = string.Empty;
         ShowCreateTask = true;
+    }
+
+    private void OpenPrimaryCreate()
+    {
+        if (ActiveTab == TaskListTab.Projects)
+            OpenCreateProject();
+        else
+            OpenCreateTask();
     }
 
     private void CloseCreateTask() => ShowCreateTask = false;
@@ -390,6 +468,7 @@
         {
             await TaskStore.CreateAsync(request);
             ShowCreateTask = false;
+            FeedbackTitle = "Task created";
             FeedbackMessage = TaskStore.LastNotice ?? $"“{request.Title}” was saved successfully.";
             await LoadTasksAsync();
         }
@@ -399,7 +478,48 @@
         }
     }
 
-    private void DismissFeedback() => FeedbackMessage = string.Empty;
+    private void OpenCreateProject()
+    {
+        FeedbackTitle = string.Empty;
+        FeedbackMessage = string.Empty;
+        ProjectOperationError = string.Empty;
+        ShowCreateProject = true;
+    }
+
+    private void CloseCreateProject()
+    {
+        if (IsCreatingProject) return;
+        ShowCreateProject = false;
+        ProjectOperationError = string.Empty;
+    }
+
+    private async Task HandleProjectCreated(CreateProjectRequest request)
+    {
+        ProjectOperationError = string.Empty;
+        IsCreatingProject = true;
+        try
+        {
+            await ProjectStore.CreateAsync(request);
+            ShowCreateProject = false;
+            FeedbackTitle = "Project created";
+            FeedbackMessage = $"“{request.Name}” is ready.";
+            await LoadProjectsAsync();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or UnauthorizedAccessException)
+        {
+            ProjectOperationError = exception.Message;
+        }
+        finally
+        {
+            IsCreatingProject = false;
+        }
+    }
+
+    private void DismissFeedback()
+    {
+        FeedbackTitle = string.Empty;
+        FeedbackMessage = string.Empty;
+    }
 
     private async Task LoadTasksAsync(bool showLoading = true)
     {
@@ -408,13 +528,15 @@
         LoadError = string.Empty;
         try
         {
-            var query = CurrentListQuery();
-            var assigned = TaskStore.LoadAssignedAsync(query);
-            var created = TaskStore.LoadCreatedAsync(query);
-            await Task.WhenAll(assigned, created);
+            var tasks = await TaskStore.LoadRelatedAsync(CurrentListQuery());
             if (generation != TaskLoadGeneration) return;
-            AssignedTasks = await assigned;
-            CreatedTasks = await created;
+            RelatedTasks = tasks;
+            if (ShowProjectDetails && SelectedProject is not null)
+            {
+                SelectedProject = await ProjectStore.LoadDetailsAsync(SelectedProject.Id);
+                ProjectTasksRefreshKey++;
+                await LoadProjectsAsync(showLoading: false);
+            }
         }
         catch (UnauthorizedAccessException exception)
         {
@@ -426,6 +548,29 @@
         }
     }
 
+    private async Task LoadProjectsAsync(bool showLoading = true)
+    {
+        var generation = ++ProjectLoadGeneration;
+        if (showLoading) IsProjectsLoading = true;
+        ProjectLoadError = string.Empty;
+        try
+        {
+            var projects = await ProjectStore.LoadAsync(ProjectSearchText);
+            if (generation != ProjectLoadGeneration) return;
+            Projects = projects;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            ProjectLoadError = exception.Message;
+        }
+        finally
+        {
+            if (generation == ProjectLoadGeneration) IsProjectsLoading = false;
+        }
+    }
+
+    private Task ApplyProjectSearchAsync() => LoadProjectsAsync(showLoading: false);
+
     private Task ApplyFiltersAsync() => LoadTasksAsync(showLoading: false);
 
     private async Task ClearFiltersAsync()
@@ -434,6 +579,7 @@
         WorkStatusFilter = string.Empty;
         AssignmentStatusFilter = string.Empty;
         PriorityFilter = string.Empty;
+        RelationFilter = nameof(TaskRelationFilter.AllRelated);
         DeadlineFilter = nameof(TaskDeadlineFilter.All);
         SortOrder = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(showLoading: false);
@@ -445,20 +591,23 @@
         ParseOptional<TaskAssignmentStatus>(AssignmentStatusFilter),
         ParseOptional<TaskPriority>(PriorityFilter),
         Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
-        Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest);
+        Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
+        Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllRelated);
 
     private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
 
-    private void ShowAssignedTasks()
+    private void ShowTasks()
     {
-        ActiveTab = TaskListTab.Assigned;
+        ActiveTab = TaskListTab.Tasks;
+        CloseProjectDetails();
         ClearBoardMessages();
     }
 
-    private void ShowCreatedTasks()
+    private void ShowProjects()
     {
-        ActiveTab = TaskListTab.Created;
+        ActiveTab = TaskListTab.Projects;
+        CloseTaskDetails();
         ClearBoardMessages();
     }
 
@@ -523,6 +672,42 @@
     {
         BoardError = string.Empty;
         BoardNotice = string.Empty;
+    }
+
+    private async Task OpenProjectAsync(Guid projectId)
+    {
+        SelectedProject = null;
+        ProjectDetailsError = string.Empty;
+        IsProjectDetailsLoading = true;
+        ShowProjectDetails = true;
+        StateHasChanged();
+
+        try
+        {
+            SelectedProject = await ProjectStore.LoadDetailsAsync(projectId);
+            ProjectTasksRefreshKey++;
+        }
+        catch (ProjectNotFoundException exception)
+        {
+            ProjectDetailsError = exception.Message;
+            await LoadProjectsAsync();
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            ProjectDetailsError = exception.Message;
+        }
+        finally
+        {
+            IsProjectDetailsLoading = false;
+        }
+    }
+
+    private void CloseProjectDetails()
+    {
+        ShowProjectDetails = false;
+        IsProjectDetailsLoading = false;
+        SelectedProject = null;
+        ProjectDetailsError = string.Empty;
     }
 
     private async Task OpenTaskAsync(Guid taskId)
@@ -764,16 +949,33 @@
 
     private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
     private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
+    private static string ProjectCountLabel(ProjectSummary project) => project.TaskCount == 0
+        ? "0 tasks"
+        : $"{project.TaskCount} tasks · {project.DoneTaskCount} done";
 
-    private IReadOnlyList<BoardTaskItem> CurrentBoardItems() => ActiveTab == TaskListTab.Assigned
-        ? AssignedTasks.Select(task => new BoardTaskItem(
-            task.Id, task.Title, "Created by", task.CreatorName, task.Deadline,
-            task.AssignmentStatus, task.WorkStatus, task.Priority, task.Version, false,
-            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus))).ToArray()
-        : CreatedTasks.Select(task => new BoardTaskItem(
-            task.Id, task.Title, "Assigned to", task.AssigneeName, task.Deadline,
+    private static string RelationshipLabel(RelatedLumaTask task) =>
+        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+            ? "Personal task"
+            : task.IsAssignedToCurrentUser
+                ? $"Assigned to you by {task.CreatorName}"
+                : $"Assigned by you to {task.AssigneeName}";
+
+    private static string RelationshipClass(RelatedLumaTask task) =>
+        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+            ? "personal"
+            : task.IsAssignedToCurrentUser ? "assigned" : "created";
+
+    private static string RelationshipMark(RelatedLumaTask task) =>
+        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+            ? "•"
+            : task.IsAssignedToCurrentUser ? "✓" : "↗";
+
+    private IReadOnlyList<BoardTaskItem> CurrentBoardItems() => RelatedTasks
+        .Select(task => new BoardTaskItem(
+            task.Id, task.Title, RelationshipLabel(task), task.ProjectName, task.Deadline,
             task.AssignmentStatus, task.WorkStatus, task.Priority, task.Version, task.IsInvited,
-            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus))).ToArray();
+            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus)))
+        .ToArray();
 
     private static bool CanDrag(bool canManage, TaskAssignmentStatus assignmentStatus, TaskWorkStatus workStatus) =>
         canManage && assignmentStatus == TaskAssignmentStatus.Accepted && workStatus != TaskWorkStatus.Done;
@@ -791,13 +993,13 @@
         BoardDragReference?.Dispose();
     }
 
-    private enum TaskListTab { Assigned, Created }
+    private enum TaskListTab { Tasks, Projects }
     private enum TaskPresentation { List, Board }
     private sealed record BoardTaskItem(
         Guid Id,
         string Title,
-        string PersonLabel,
-        string PersonName,
+        string RelationshipLabel,
+        string ProjectName,
         DateOnly Deadline,
         TaskAssignmentStatus AssignmentStatus,
         TaskWorkStatus WorkStatus,

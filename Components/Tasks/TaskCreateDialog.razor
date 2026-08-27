@@ -104,6 +104,7 @@
                                     ErrorMessage="@DeadlineError" />
             </div>
 
+            <TaskProjectPicker @ref="ProjectPicker" @bind-Value="SelectedProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
 
             <div class="dialog-actions task-dialog-actions">
@@ -131,8 +132,10 @@
     private string AssigneeSearch = string.Empty;
     private DateOnly? Deadline;
     private TaskPriority Priority = TaskPriority.None;
+    private Guid? SelectedProjectId;
     private bool ShowAssigneePicker;
     private LumaDateOnlyPicker? DeadlinePicker;
+    private TaskProjectPicker? ProjectPicker;
 
     protected override async Task OnInitializedAsync()
     {
@@ -200,7 +203,8 @@
             SelectedAssigneeId,
             Deadline,
             Priority,
-            SelectedInvitationEmail));
+            SelectedInvitationEmail,
+            SelectedProjectId));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();
@@ -252,6 +256,7 @@
     {
         ShowAssigneePicker = false;
         DeadlinePicker?.Close();
+        ProjectPicker?.Close();
     }
 
     private async Task HandleKeyDown(KeyboardEventArgs args)

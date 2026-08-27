@@ -21,7 +21,8 @@ public sealed class TaskEmailNotifier(
             notification.DoerName,
             notification.Deadline,
             notification.Priority,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyAcceptedAsync(
@@ -37,7 +38,8 @@ public sealed class TaskEmailNotifier(
             notification.DoerName,
             notification.Deadline,
             notification.AcceptedAt,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyDeadlineChangeRequestedAsync(
@@ -55,7 +57,8 @@ public sealed class TaskEmailNotifier(
             notification.RequestedDeadline,
             notification.Comment,
             notification.RequestedAt,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyDeadlineChangeApprovedAsync(
@@ -73,7 +76,8 @@ public sealed class TaskEmailNotifier(
             notification.ApprovedDeadline,
             notification.Comment,
             notification.ApprovedAt,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyDeadlineChangeDeclinedAsync(
@@ -91,7 +95,8 @@ public sealed class TaskEmailNotifier(
             notification.DeclinedDeadline,
             notification.Comment,
             notification.DeclinedAt,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyUpdatedAsync(
@@ -115,7 +120,11 @@ public sealed class TaskEmailNotifier(
             notification.Changes.PriorityChanged,
             PriorityLabel(notification.Changes.PreviousPriority),
             PriorityLabel(notification.Changes.UpdatedPriority),
-            notification.TaskUrl)),
+            notification.Changes.ProjectChanged,
+            notification.Changes.PreviousProject,
+            notification.Changes.UpdatedProject,
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyWorkStatusChangedAsync(
@@ -135,7 +144,8 @@ public sealed class TaskEmailNotifier(
             WorkStatusLabel(notification.PreviousStatus),
             WorkStatusLabel(notification.NewStatus),
             notification.Deadline,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     public Task NotifyCommentAddedAsync(
@@ -151,7 +161,8 @@ public sealed class TaskEmailNotifier(
             notification.TaskTitle,
             notification.CommentAuthor,
             notification.CommentText,
-            notification.TaskUrl)),
+            notification.TaskUrl,
+            notification.ProjectName)),
         cancellationToken);
 
     private async Task SendAllAsync(

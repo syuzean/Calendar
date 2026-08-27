@@ -5,6 +5,8 @@ Hi {{RecipientName}},
 {{TaskDoer}} requested a deadline change for this task:
 
 {{TaskTitle}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 Current deadline: {{CurrentDeadline}}
 Requested deadline: {{RequestedDeadline}}
 {{#Comment}}

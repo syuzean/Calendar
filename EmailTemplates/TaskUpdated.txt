@@ -6,6 +6,8 @@ Hi {{RecipientName}},
 
 {{TaskTitle}}
 Deadline: {{Deadline}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 
 Changes
 {{#TitleChanged}}
@@ -23,6 +25,11 @@ Priority
 {{PreviousPriority}}
 → {{UpdatedPriority}}
 {{/PriorityChanged}}
+{{#ProjectChanged}}
+Project
+{{PreviousProject}}
+→ {{UpdatedProject}}
+{{/ProjectChanged}}
 
 Open task in LUMA: {{TaskUrl}}
 

@@ -53,8 +53,10 @@ namespace Calendar
             builder.Services.AddSingleton<ITaskNotifier, TaskEmailNotifier>();
             builder.Services.AddSingleton<ITaskLinkBuilder, TaskLinkBuilder>();
             builder.Services.AddScoped<IEventInvitationService, EventInvitationService>();
+            builder.Services.AddScoped<ITaskInvitationService, TaskInvitationService>();
             builder.Services.AddScoped<CalendarStore>();
             builder.Services.AddScoped<TaskStore>();
+            builder.Services.AddScoped<ProjectStore>();
 
             var app = builder.Build();
 
@@ -83,6 +85,7 @@ namespace Calendar
                 .AddInteractiveServerRenderMode();
             app.MapAccountEndpoints();
             app.MapInvitationEndpoints();
+            app.MapTaskInvitationEndpoints();
 
             app.Run();
         }

@@ -1,0 +1,25 @@
+.project-create-dialog {
+    width: min(590px, 100%);
+}
+
+.project-create-dialog .dialog-header p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.project-create-dialog textarea {
+    min-height: 125px;
+    line-height: 1.55;
+}
+
+.project-create-dialog button:disabled {
+    cursor: wait;
+    opacity: .62;
+}
+
+@media (max-width: 620px) {
+    .project-create-dialog {
+        padding: 21px;
+    }
+}

@@ -4,6 +4,7 @@ using Calendar.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Calendar.Data.Migrations
 {
     [DbContext(typeof(CalendarDbContext))]
-    partial class CalendarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260827125054_AddProjects")]
+    partial class AddProjects
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -285,9 +288,6 @@ namespace Calendar.Data.Migrations
                     b.Property<int>("Priority")
                         .HasColumnType("int");
 
-                    b.Property<Guid?>("ProjectId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<DateOnly?>("RequestedDeadline")
                         .HasColumnType("date");
 
@@ -308,8 +308,6 @@ namespace Calendar.Data.Migrations
                     b.HasIndex("AssigneeId");
 
                     b.HasIndex("CreatorId");
-
-                    b.HasIndex("ProjectId");
 
                     b.ToTable("Tasks", null, t =>
                         {
@@ -490,16 +488,9 @@ namespace Calendar.Data.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("Calendar.Models.LumaProject", "Project")
-                        .WithMany("Tasks")
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Assignee");
 
                     b.Navigation("Creator");
-
-                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>
@@ -573,11 +564,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Invitations");
 
                     b.Navigation("Participants");
-                });
-
-            modelBuilder.Entity("Calendar.Models.LumaProject", b =>
-                {
-                    b.Navigation("Tasks");
                 });
 
             modelBuilder.Entity("Calendar.Models.LumaTask", b =>

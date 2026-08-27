@@ -26,6 +26,7 @@
                     <small class="field-error">@TitleError</small>
                 }
             </label>
+            <TaskProjectPicker @bind-Value="ProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <label class="field">
                 <span>Description <em>optional</em></span>
@@ -51,19 +52,22 @@
     private string Description = string.Empty;
     private string TitleError = string.Empty;
     private TaskPriority Priority;
+    private Guid? ProjectId;
 
     protected override void OnInitialized()
     {
         Title = Details.Title;
         Description = Details.Description;
         Priority = Details.Priority;
+        ProjectId = Details.ProjectId;
     }
 
     private async Task Submit()
     {
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
         if (TitleError.Length > 0) return;
-        await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(Title.Trim(), Description.Trim(), Details.Version, Priority));
+        await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
+            Title.Trim(), Description.Trim(), Details.Version, Priority, ProjectId));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();

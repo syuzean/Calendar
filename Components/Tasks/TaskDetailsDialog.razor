@@ -65,6 +65,10 @@
                         <dt>Priority</dt>
                         <dd><span class="task-detail-priority @PriorityClass(Details.Priority)">@PriorityLabel(Details.Priority)</span></dd>
                     </div>
+                    <div>
+                        <dt>Project</dt>
+                        <dd><span class="task-detail-project" aria-hidden="true">◇</span>@(string.IsNullOrWhiteSpace(Details.ProjectName) ? "No project" : Details.ProjectName)</dd>
+                    </div>
                 </dl>
 
                 @if (Details.AssignmentStatus == TaskAssignmentStatus.DeadlineChangeRequested && Details.RequestedDeadline is not null)

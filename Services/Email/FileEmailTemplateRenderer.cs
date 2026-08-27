@@ -47,8 +47,9 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             data.TaskDoer,
             data.Deadline,
             data.TaskUrl,
-            null);
-        values["Priority"] = data.Priority == TaskPriority.None ? string.Empty : data.Priority.ToString();
+            null,
+            data.ProjectName);
+        values["Priority"] = data.Priority == TaskPriority.None ? "No priority" : data.Priority.ToString();
         return RenderTemplate("TaskCreated", values);
     }
 
@@ -63,22 +64,23 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             data.TaskDoer,
             data.Deadline,
             data.TaskUrl,
-            data.AcceptedAt));
+            data.AcceptedAt,
+            data.ProjectName));
 
     public RenderedEmailTemplate RenderTaskDeadlineChangeRequested(TaskDeadlineChangeRequestedTemplateData data) =>
         RenderTemplate("TaskDeadlineChangeRequested", DeadlineChangeValues(
             data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
-            data.CurrentDeadline, data.RequestedDeadline, data.Comment, data.RequestedAt, data.TaskUrl));
+            data.CurrentDeadline, data.RequestedDeadline, data.Comment, data.RequestedAt, data.TaskUrl, data.ProjectName));
 
     public RenderedEmailTemplate RenderTaskDeadlineChangeApproved(TaskDeadlineChangeApprovedTemplateData data) =>
         RenderTemplate("TaskDeadlineChangeApproved", DeadlineChangeValues(
             data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
-            data.PreviousDeadline, data.ApprovedDeadline, data.Comment, data.ApprovedAt, data.TaskUrl));
+            data.PreviousDeadline, data.ApprovedDeadline, data.Comment, data.ApprovedAt, data.TaskUrl, data.ProjectName));
 
     public RenderedEmailTemplate RenderTaskDeadlineChangeDeclined(TaskDeadlineChangeDeclinedTemplateData data) =>
         RenderTemplate("TaskDeadlineChangeDeclined", DeadlineChangeValues(
             data.RecipientName, data.RecipientEmail, data.TaskTitle, data.TaskMaker, data.TaskDoer,
-            data.CurrentDeadline, data.DeclinedDeadline, data.Comment, data.DeclinedAt, data.TaskUrl));
+            data.CurrentDeadline, data.DeclinedDeadline, data.Comment, data.DeclinedAt, data.TaskUrl, data.ProjectName));
 
     public RenderedEmailTemplate RenderTaskUpdated(TaskUpdatedTemplateData data) =>
         RenderTemplate("TaskUpdated", new Dictionary<string, string>(StringComparer.Ordinal)
@@ -98,6 +100,11 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["PriorityChanged"] = data.PriorityChanged ? "true" : string.Empty,
             ["PreviousPriority"] = data.PreviousPriority,
             ["UpdatedPriority"] = data.UpdatedPriority,
+            ["ProjectChanged"] = data.ProjectChanged ? "true" : string.Empty,
+            ["PreviousProject"] = data.PreviousProject,
+            ["UpdatedProject"] = data.UpdatedProject,
+            ["Project"] = data.ProjectName,
+            ["HasProject"] = string.IsNullOrWhiteSpace(data.ProjectName) ? string.Empty : "true",
             ["TaskUrl"] = data.TaskUrl
         });
 
@@ -113,6 +120,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["PreviousStatus"] = data.PreviousStatus,
             ["NewStatus"] = data.NewStatus,
             ["Deadline"] = data.Deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+            ["Project"] = data.ProjectName,
+            ["HasProject"] = string.IsNullOrWhiteSpace(data.ProjectName) ? string.Empty : "true",
             ["TaskUrl"] = data.TaskUrl
         });
 
@@ -124,6 +133,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["TaskTitle"] = data.TaskTitle,
             ["CommentAuthor"] = data.CommentAuthor,
             ["CommentText"] = data.CommentText,
+            ["Project"] = data.ProjectName,
+            ["HasProject"] = string.IsNullOrWhiteSpace(data.ProjectName) ? string.Empty : "true",
             ["TaskUrl"] = data.TaskUrl
         });
 
@@ -183,7 +194,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         string taskDoer,
         DateOnly deadline,
         string taskUrl,
-        DateTime? acceptedAt) => new(StringComparer.Ordinal)
+        DateTime? acceptedAt,
+        string projectName) => new(StringComparer.Ordinal)
     {
         ["RecipientName"] = string.IsNullOrWhiteSpace(recipientName) ? recipientEmail : recipientName,
         ["RecipientEmail"] = recipientEmail,
@@ -193,6 +205,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         ["TaskMaker"] = taskMaker,
         ["TaskDoer"] = taskDoer,
         ["Deadline"] = deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+        ["Project"] = projectName ?? string.Empty,
+        ["HasProject"] = string.IsNullOrWhiteSpace(projectName) ? string.Empty : "true",
         ["TaskUrl"] = taskUrl,
         ["AcceptedAt"] = acceptedAt?.ToString("MMMM d, yyyy 'at' h:mm tt", CultureInfo.InvariantCulture) ?? string.Empty
     };
@@ -207,7 +221,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         DateOnly requestedDeadline,
         string comment,
         DateTime actionAt,
-        string taskUrl) => new(StringComparer.Ordinal)
+        string taskUrl,
+        string projectName) => new(StringComparer.Ordinal)
     {
         ["RecipientName"] = string.IsNullOrWhiteSpace(recipientName) ? recipientEmail : recipientName,
         ["RecipientEmail"] = recipientEmail,
@@ -217,6 +232,8 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         ["CurrentDeadline"] = currentDeadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
         ["RequestedDeadline"] = requestedDeadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
         ["Comment"] = comment ?? string.Empty,
+        ["Project"] = projectName ?? string.Empty,
+        ["HasProject"] = string.IsNullOrWhiteSpace(projectName) ? string.Empty : "true",
         ["ActionAt"] = actionAt.ToString("MMMM d, yyyy 'at' h:mm tt", CultureInfo.InvariantCulture),
         ["TaskUrl"] = taskUrl
     };

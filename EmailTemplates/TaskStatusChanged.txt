@@ -6,6 +6,8 @@ Hi {{RecipientName}},
 
 {{TaskTitle}}
 Task Doer: {{TaskDoer}}
+{{#HasProject}}Project: {{Project}}
+{{/HasProject}}
 Progress: {{PreviousStatus}} → {{NewStatus}}
 Deadline: {{Deadline}}
 
