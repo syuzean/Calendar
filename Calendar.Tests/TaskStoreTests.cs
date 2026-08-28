@@ -1897,6 +1897,49 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task ProjectBoardQuery_ColumnCountsReflectOnlyFilteredProjectTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var selected = await SeedProjectAsync(fixture, "Selected Board");
+        var other = await SeedProjectAsync(fixture, "Other Board");
+        await SeedTaskAsync(fixture, "Selected todo", priority: TaskPriority.High,
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.ToDo, project: selected);
+        await SeedTaskAsync(fixture, "Selected doing", priority: TaskPriority.High,
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.InProgress, project: selected);
+        await SeedTaskAsync(fixture, "Filtered priority", priority: TaskPriority.Low,
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.Done, project: selected);
+        await SeedTaskAsync(fixture, "Wrong project", priority: TaskPriority.High,
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.Done, project: other);
+
+        var tasks = await fixture.CreateStore(fixture.Unrelated).LoadProjectTasksAsync(
+            selected.Id, new TaskListQuery(Priority: TaskPriority.High));
+
+        Assert.Equal(2, tasks.Count);
+        Assert.Single(tasks, task => task.WorkStatus == TaskWorkStatus.ToDo);
+        Assert.Single(tasks, task => task.WorkStatus == TaskWorkStatus.InProgress);
+        Assert.DoesNotContain(tasks, task => task.WorkStatus == TaskWorkStatus.Done);
+        Assert.All(tasks, task => Assert.Equal(selected.Id, task.ProjectId));
+    }
+
+    [Fact]
+    public async Task ProjectBoardStatusChange_ReusesDoerAuthorizationAndPersists()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var project = await SeedProjectAsync(fixture, "Delivery Board");
+        var task = await SeedTaskAsync(fixture, "Start project work",
+            assignmentStatus: TaskAssignmentStatus.Accepted, workStatus: TaskWorkStatus.ToDo, project: project);
+        var doerStore = fixture.CreateStore(fixture.Assignee);
+
+        var updated = await doerStore.ChangeWorkStatusAsync(
+            task.Id, new ChangeTaskWorkStatusRequest(TaskWorkStatus.InProgress, task.Version));
+        var projectTask = Assert.Single(await doerStore.LoadProjectTasksAsync(project.Id));
+
+        Assert.Equal(TaskWorkStatus.InProgress, updated.WorkStatus);
+        Assert.Equal(TaskWorkStatus.InProgress, projectTask.WorkStatus);
+        Assert.True(projectTask.CanManageWorkStatus);
+    }
+
+    [Fact]
     public async Task ProjectVisibility_DoesNotGrantTaskMutation()
     {
         var fixture = await TestFixture.CreateAsync();

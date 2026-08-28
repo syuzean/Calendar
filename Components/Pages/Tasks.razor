@@ -132,9 +132,10 @@
                 {
                     @if (ShowProjectDetails)
                     {
-                        <ProjectDetailsView Details="@SelectedProject" IsLoading="@IsProjectDetailsLoading"
+                        <ProjectDetailsView @ref="ProjectDetailsComponent" Details="@SelectedProject" IsLoading="@IsProjectDetailsLoading"
                                             ErrorMessage="@ProjectDetailsError" RefreshKey="@ProjectTasksRefreshKey"
-                                            OpenTaskRequested="OpenTaskAsync" BackRequested="CloseProjectDetails" />
+                                            OpenTaskRequested="OpenTaskAsync" BackRequested="CloseProjectDetails"
+                                            TaskChanged="RefreshAfterProjectBoardChangeAsync" />
                     }
                     else
                     {
@@ -375,6 +376,7 @@
     private string ProjectSearchText = string.Empty;
     private IReadOnlyList<ProjectSummary> Projects = [];
     private ProjectDetails? SelectedProject;
+    private ProjectDetailsView? ProjectDetailsComponent;
     private long ProjectLoadGeneration;
     private long ProjectTasksRefreshKey;
     private bool ShowTaskDetails;
@@ -626,6 +628,12 @@
     [JSInvokable]
     public async Task HandleTaskBoardDrop(string taskIdValue, string targetStatusValue, string versionValue)
     {
+        if (ActiveTab == TaskListTab.Projects && ShowProjectDetails && ProjectDetailsComponent is not null)
+        {
+            await ProjectDetailsComponent.HandleBoardDropAsync(taskIdValue, targetStatusValue, versionValue);
+            return;
+        }
+
         BoardError = string.Empty;
         BoardNotice = string.Empty;
         if (!Guid.TryParse(taskIdValue, out var taskId) ||
@@ -663,6 +671,12 @@
     [JSInvokable]
     public Task HandleInvalidTaskBoardDrop()
     {
+        if (ActiveTab == TaskListTab.Projects && ShowProjectDetails && ProjectDetailsComponent is not null)
+        {
+            ProjectDetailsComponent.ShowInvalidBoardDrop();
+            return Task.CompletedTask;
+        }
+
         BoardNotice = string.Empty;
         BoardError = "Tasks can move only forward: To Do → In Progress → Done.";
         return Task.CompletedTask;
@@ -672,6 +686,15 @@
     {
         BoardError = string.Empty;
         BoardNotice = string.Empty;
+    }
+
+    private async Task RefreshAfterProjectBoardChangeAsync()
+    {
+        if (SelectedProject is null) return;
+
+        RelatedTasks = await TaskStore.LoadRelatedAsync(CurrentListQuery());
+        SelectedProject = await ProjectStore.LoadDetailsAsync(SelectedProject.Id);
+        await LoadProjectsAsync(showLoading: false);
     }
 
     private async Task OpenProjectAsync(Guid projectId)

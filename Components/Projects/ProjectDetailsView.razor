@@ -29,6 +29,15 @@
 
         <div class="project-description-card"><span>DESCRIPTION</span><p>@(string.IsNullOrWhiteSpace(Details.Description) ? "No description provided." : Details.Description)</p></div>
 
+        <div class="project-task-view-row">
+            <div class="project-task-view-switch" role="group" aria-label="Project task view">
+                <button type="button" class="@(Presentation == ProjectTaskPresentation.List ? "active" : null)"
+                        aria-pressed="@(Presentation == ProjectTaskPresentation.List)" @onclick="ShowList">List</button>
+                <button type="button" class="@(Presentation == ProjectTaskPresentation.Board ? "active" : null)"
+                        aria-pressed="@(Presentation == ProjectTaskPresentation.Board)" @onclick="ShowBoard">Board</button>
+            </div>
+        </div>
+
         <div class="project-task-tools" aria-label="Filter project tasks">
             <label class="project-task-search"><span aria-hidden="true">⌕</span><input type="search" placeholder="Search tasks…" aria-label="Search project tasks by title" @bind="Search" @bind:event="oninput" @bind:after="ApplyFiltersAsync" /></label>
             <label><span>Assignee</span><select @bind="Assignee" @bind:after="ApplyFiltersAsync"><option value="">All</option>@foreach (var option in Assignees) { <option value="@option.Id">@option.Name</option> }</select></label>
@@ -47,6 +56,56 @@
         else if (!string.IsNullOrWhiteSpace(TasksError))
         {
             <div class="project-task-state error" role="alert">@TasksError</div>
+        }
+        else if (Presentation == ProjectTaskPresentation.Board)
+        {
+            <div class="project-task-board" aria-label="Project task Board">
+                @foreach (var status in BoardStatuses)
+                {
+                    var columnItems = Tasks.Where(task => task.WorkStatus == status).ToArray();
+                    <section class="project-board-column" data-task-drop="@status" aria-label="@WorkLabel(status) tasks">
+                        <header><h3>@WorkLabel(status)</h3><span>@columnItems.Length</span></header>
+                        <div class="project-board-column-body">
+                            @if (columnItems.Length == 0)
+                            {
+                                <div class="project-board-empty">No tasks here</div>
+                            }
+                            else
+                            {
+                                @foreach (var task in columnItems)
+                                {
+                                    var deadlineClass = DeadlineClass(task.Deadline);
+                                    var canDrag = CanDrag(task);
+                                    <button type="button" class="project-board-card @deadlineClass"
+                                            draggable="@(canDrag ? "true" : "false")"
+                                            data-task-board-card="true"
+                                            data-task-drag="@(canDrag ? task.Id.ToString("D") : null)"
+                                            data-task-version="@(canDrag ? task.Version.ToString("D") : null)"
+                                            data-work-status="@(canDrag ? task.WorkStatus.ToString() : null)"
+                                            title="@(canDrag ? "Drag to the next work stage" : "Open task details")"
+                                            @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
+                                        <strong>@task.Title</strong>
+                                        <span class="project-board-person">Assigned to @task.AssigneeName</span>
+                                        <span class="project-task-badges">
+                                            <i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i>
+                                            <i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited)">@AssignmentLabel(task.AssignmentStatus, task.IsInvited)</i>
+                                        </span>
+                                        <span class="project-board-deadline @deadlineClass"><time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time></span>
+                                    </button>
+                                }
+                            }
+                        </div>
+                    </section>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(BoardError))
+            {
+                <div class="project-board-message error" role="alert">@BoardError</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(BoardNotice))
+            {
+                <div class="project-board-message" role="status">@BoardNotice</div>
+            }
         }
         else if (Tasks.Count == 0)
         {
@@ -79,6 +138,7 @@
     [Parameter] public long RefreshKey { get; set; }
     [Parameter] public EventCallback BackRequested { get; set; }
     [Parameter] public EventCallback<Guid> OpenTaskRequested { get; set; }
+    [Parameter] public EventCallback TaskChanged { get; set; }
 
     private IReadOnlyList<RelatedLumaTask> Tasks = [];
     private IReadOnlyList<AssigneeFilterOption> Assignees = [];
@@ -93,6 +153,11 @@
     private string Priority = string.Empty;
     private string Deadline = nameof(TaskDeadlineFilter.All);
     private string Sort = nameof(TaskSortOrder.DeadlineNearest);
+    private string BoardError = string.Empty;
+    private string BoardNotice = string.Empty;
+    private ProjectTaskPresentation Presentation = ProjectTaskPresentation.List;
+    private static readonly TaskWorkStatus[] BoardStatuses =
+        [TaskWorkStatus.ToDo, TaskWorkStatus.InProgress, TaskWorkStatus.Done];
 
     private bool HasFilters => !string.IsNullOrWhiteSpace(Search) || Assignee.Length > 0 || Work.Length > 0 || Assignment.Length > 0 || Priority.Length > 0 || Deadline != nameof(TaskDeadlineFilter.All) || Sort != nameof(TaskSortOrder.DeadlineNearest);
     private int ProgressPercent => Details is { TaskCount: > 0 } ? (int)Math.Round(Details.DoneTaskCount * 100d / Details.TaskCount) : 0;
@@ -107,6 +172,63 @@
     }
 
     private Task ApplyFiltersAsync() => LoadTasksAsync(refreshAssignees: false);
+
+    private void ShowList()
+    {
+        Presentation = ProjectTaskPresentation.List;
+        ClearBoardMessages();
+    }
+
+    private void ShowBoard()
+    {
+        Presentation = ProjectTaskPresentation.Board;
+        ClearBoardMessages();
+    }
+
+    public async Task HandleBoardDropAsync(string taskIdValue, string targetStatusValue, string versionValue)
+    {
+        ClearBoardMessages();
+        if (!Guid.TryParse(taskIdValue, out var taskId) ||
+            !Guid.TryParse(versionValue, out var version) ||
+            !Enum.TryParse<TaskWorkStatus>(targetStatusValue, out var targetStatus))
+        {
+            BoardError = "The task drop could not be understood. Reload the page and try again.";
+            return;
+        }
+
+        var task = Tasks.SingleOrDefault(item => item.Id == taskId);
+        if (task is null || !CanDrag(task) || !IsForwardTransition(task.WorkStatus, targetStatus))
+        {
+            BoardError = "Tasks can move only forward after the Task Doer accepts them.";
+            return;
+        }
+
+        try
+        {
+            await TaskStore.ChangeWorkStatusAsync(taskId, new ChangeTaskWorkStatusRequest(targetStatus, version));
+            BoardNotice = TaskStore.LastNotice ?? $"Task moved to {WorkLabel(targetStatus)}.";
+            await LoadTasksAsync(refreshAssignees: false);
+            await TaskChanged.InvokeAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            BoardError = exception.Message;
+            await LoadTasksAsync(refreshAssignees: false);
+        }
+    }
+
+    public void ShowInvalidBoardDrop()
+    {
+        BoardNotice = string.Empty;
+        BoardError = "Tasks can move only forward: To Do → In Progress → Done.";
+    }
+
+    private void ClearBoardMessages()
+    {
+        BoardError = string.Empty;
+        BoardNotice = string.Empty;
+    }
+
     private async Task ClearFiltersAsync()
     {
         Search = Work = Assignment = Priority = Assignee = string.Empty;
@@ -147,5 +269,23 @@
     private static string WorkLabel(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "In Progress" : value == TaskWorkStatus.ToDo ? "To Do" : "Done";
     private static string AssignmentClass(TaskAssignmentStatus value, bool invited) => invited ? "invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "requested" : value.ToString().ToLowerInvariant();
     private static string AssignmentLabel(TaskAssignmentStatus value, bool invited) => invited ? "Invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "Deadline requested" : value.ToString();
+    private static bool CanDrag(RelatedLumaTask task) =>
+        task.CanManageWorkStatus && task.AssignmentStatus == TaskAssignmentStatus.Accepted && task.WorkStatus != TaskWorkStatus.Done;
+    private static bool IsForwardTransition(TaskWorkStatus current, TaskWorkStatus target) =>
+        (current, target) is (TaskWorkStatus.ToDo, TaskWorkStatus.InProgress) or (TaskWorkStatus.InProgress, TaskWorkStatus.Done);
+    private static string FormatDeadline(DateOnly deadline)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (deadline == today) return "Today";
+        if (deadline < today) return $"Overdue · {deadline:MMM d, yyyy}";
+        return deadline.ToString("MMM d, yyyy");
+    }
+    private static string DeadlineClass(DateOnly deadline)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (deadline < today) return "overdue";
+        return deadline == today ? "due-today" : string.Empty;
+    }
     private sealed record AssigneeFilterOption(Guid Id, string Name);
+    private enum ProjectTaskPresentation { List, Board }
 }
