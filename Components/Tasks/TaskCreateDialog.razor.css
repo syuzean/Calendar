@@ -151,6 +151,17 @@
     color: #6844dc;
 }
 
+.task-structured-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.task-structured-fields textarea {
+    min-height: 88px;
+    resize: vertical;
+}
+
 .task-assignee-avatar.unassigned {
     background: #f0edf4;
     color: #7d7486;
@@ -219,6 +230,10 @@
 @keyframes task-picker-rise {
     from { opacity: 0; transform: translateY(-5px) scale(.985); }
     to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 620px) {
+    .task-structured-fields { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {

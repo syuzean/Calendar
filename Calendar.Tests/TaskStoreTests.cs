@@ -26,8 +26,44 @@ public sealed class TaskStoreTests
         var saved = await db.Tasks.SingleAsync();
         Assert.Equal(id, saved.Id);
         Assert.Equal("Prepare launch notes", saved.Title);
-        Assert.Equal("Include the final checklist.", saved.Description);
+        Assert.Equal("Include the final checklist.", saved.Problem);
+        Assert.Equal(string.Empty, saved.ExpectedResult);
         Assert.InRange(saved.CreatedAt, before, DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task CreateTask_SavesProblemAndExpectedResult()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            Problem = "  **Problem:** reports are late.  ",
+            ExpectedResult = "  - Reports arrive by Friday  "
+        };
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(request);
+
+        await using var db = fixture.CreateDbContext();
+        var task = await db.Tasks.SingleAsync(item => item.Id == taskId);
+        Assert.Equal("**Problem:** reports are late.", task.Problem);
+        Assert.Equal("- Reports arrive by Friday", task.ExpectedResult);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateTask_RejectsOversizedStructuredDescription(bool oversizedProblem)
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            Problem = oversizedProblem ? new string('p', 4001) : "Problem",
+            ExpectedResult = oversizedProblem ? "Expected" : new string('e', 4001)
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(request));
+        await AssertNoTasksAsync(fixture);
     }
 
     [Fact]
@@ -445,7 +481,8 @@ public sealed class TaskStoreTests
         Assert.Equal(taskId, details.Id);
         Assert.Equal(fixture.Creator.Name, details.CreatorName);
         Assert.Equal(fixture.Assignee.Name, details.AssigneeName);
-        Assert.Equal("Include the final checklist.", details.Description);
+        Assert.Equal("Include the final checklist.", details.Problem);
+        Assert.Equal(string.Empty, details.ExpectedResult);
     }
 
     [Fact]
@@ -539,7 +576,8 @@ public sealed class TaskStoreTests
         var overdueTask = new LumaTask
         {
             Title = "Existing overdue task",
-            Description = "Created before its deadline passed.",
+            Problem = "Created before its deadline passed.",
+            ExpectedResult = string.Empty,
             CreatorId = fixture.Creator.Id,
             AssigneeId = fixture.Assignee.Id,
             Deadline = overdueDeadline,
@@ -616,7 +654,7 @@ public sealed class TaskStoreTests
         var taskId = await makerStore.CreateAsync(request);
         var stale = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
         await makerStore.UpdateContentAsync(taskId, new(
-            "Updated title", request.Description, stale.Version, TaskPriority.Low));
+            "Updated title", request.Problem, stale.Version, TaskPriority.Low));
 
         var exception = await Assert.ThrowsAsync<ValidationException>(() =>
             fixture.CreateStore(fixture.Unrelated).TakeAsync(taskId, new TakeLumaTaskRequest(stale.Version)));
@@ -1062,7 +1100,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task Maker_CanEditTitleAndDescription()
+    public async Task Maker_CanEditTitleAndStructuredDescription()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
@@ -1073,15 +1111,39 @@ public sealed class TaskStoreTests
             "Updated launch notes", "Add refund coverage.", before.Version));
 
         Assert.Equal("Updated launch notes", updated.Title);
-        Assert.Equal("Add refund coverage.", updated.Description);
+        Assert.Equal("Add refund coverage.", updated.Problem);
         await using var db = fixture.CreateDbContext();
         var saved = await db.Tasks.SingleAsync();
         Assert.Equal(updated.Title, saved.Title);
-        Assert.Equal(updated.Description, saved.Description);
+        Assert.Equal(updated.Problem, saved.Problem);
     }
 
     [Fact]
-    public async Task Maker_CanEditDescriptionWithoutChangingTitle()
+    public async Task Maker_CanEditProblemAndExpectedResult()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+
+        var updated = await store.UpdateContentAsync(taskId, new(
+            before.Title,
+            "## Problem\nThe export is incomplete.",
+            before.Version,
+            before.Priority,
+            before.ProjectId,
+            "- Every row is exported"));
+
+        Assert.Equal("## Problem\nThe export is incomplete.", updated.Problem);
+        Assert.Equal("- Every row is exported", updated.ExpectedResult);
+        await using var db = fixture.CreateDbContext();
+        var saved = await db.Tasks.SingleAsync(item => item.Id == taskId);
+        Assert.Equal(updated.Problem, saved.Problem);
+        Assert.Equal(updated.ExpectedResult, saved.ExpectedResult);
+    }
+
+    [Fact]
+    public async Task Maker_CanEditProblemWithoutChangingTitle()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
@@ -1092,7 +1154,7 @@ public sealed class TaskStoreTests
             before.Title, "A more useful description.", before.Version));
 
         Assert.Equal(before.Title, updated.Title);
-        Assert.Equal("A more useful description.", updated.Description);
+        Assert.Equal("A more useful description.", updated.Problem);
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
 
@@ -1122,7 +1184,7 @@ public sealed class TaskStoreTests
         var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
         var before = await store.LoadDetailsAsync(taskId);
 
-        var result = await store.UpdateContentAsync(taskId, new(before.Title, before.Description, before.Version));
+        var result = await store.UpdateContentAsync(taskId, new(before.Title, before.Problem, before.Version, ExpectedResult: before.ExpectedResult));
 
         Assert.Equal(before.Version, result.Version);
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
@@ -1137,7 +1199,7 @@ public sealed class TaskStoreTests
         var store = fixture.CreateStore(fixture.Creator);
         var before = await store.LoadDetailsAsync(taskId);
 
-        var updated = await store.UpdateContentAsync(taskId, new("Revised title", before.Description, before.Version));
+        var updated = await store.UpdateContentAsync(taskId, new("Revised title", before.Problem, before.Version, ExpectedResult: before.ExpectedResult));
 
         Assert.Equal(TaskAssignmentStatus.Accepted, updated.AssignmentStatus);
         Assert.Equal(before.AcceptedAt, updated.AcceptedAt);
@@ -1153,7 +1215,7 @@ public sealed class TaskStoreTests
         var store = fixture.CreateStore(fixture.Creator);
 
         var updated = await store.UpdateContentAsync(taskId, new(
-            "Revised title", requested.Description, requested.Version, TaskPriority.High));
+            "Revised title", requested.Problem, requested.Version, TaskPriority.High, ExpectedResult: requested.ExpectedResult));
 
         Assert.Equal(TaskAssignmentStatus.DeadlineChangeRequested, updated.AssignmentStatus);
         Assert.Equal(requested.RequestedDeadline, updated.RequestedDeadline);
@@ -1170,10 +1232,10 @@ public sealed class TaskStoreTests
         var store = fixture.CreateStore(fixture.Creator);
         var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
         var stale = await store.LoadDetailsAsync(taskId);
-        await store.UpdateContentAsync(taskId, new("First update", stale.Description, stale.Version));
+        await store.UpdateContentAsync(taskId, new("First update", stale.Problem, stale.Version, ExpectedResult: stale.ExpectedResult));
 
         var exception = await Assert.ThrowsAsync<ValidationException>(() =>
-            store.UpdateContentAsync(taskId, new("Stale update", stale.Description, stale.Version)));
+            store.UpdateContentAsync(taskId, new("Stale update", stale.Problem, stale.Version, ExpectedResult: stale.ExpectedResult)));
 
         Assert.Contains("changed in another session", exception.Message);
     }
@@ -1186,7 +1248,7 @@ public sealed class TaskStoreTests
         var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
         var before = await store.LoadDetailsAsync(taskId);
 
-        await store.UpdateContentAsync(taskId, new("Revised title", before.Description, before.Version));
+        await store.UpdateContentAsync(taskId, new("Revised title", before.Problem, before.Version, ExpectedResult: before.ExpectedResult));
 
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
@@ -1271,7 +1333,7 @@ public sealed class TaskStoreTests
         fixture.Notifier.FailUpdated = true;
         var makerStore = fixture.CreateStore(fixture.Creator);
         var before = await makerStore.LoadDetailsAsync(taskId);
-        var edited = await makerStore.UpdateContentAsync(taskId, new("Persisted edit", before.Description, before.Version));
+        var edited = await makerStore.UpdateContentAsync(taskId, new("Persisted edit", before.Problem, before.Version, ExpectedResult: before.ExpectedResult));
         Assert.Equal("Persisted edit", edited.Title);
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
         Assert.Null(makerStore.LastNotice);
@@ -1455,7 +1517,7 @@ public sealed class TaskStoreTests
         var before = await makerStore.LoadDetailsAsync(taskId);
 
         var updated = await makerStore.UpdateContentAsync(taskId, new(
-            before.Title, before.Description, before.Version, TaskPriority.Urgent));
+            before.Title, before.Problem, before.Version, TaskPriority.Urgent, ExpectedResult: before.ExpectedResult));
 
         Assert.Equal(TaskPriority.Urgent, updated.Priority);
         Assert.Equal(TaskAssignmentStatus.Accepted, updated.AssignmentStatus);
@@ -1472,7 +1534,7 @@ public sealed class TaskStoreTests
         var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id));
         var details = await makerStore.LoadDetailsAsync(taskId);
         var request = new UpdateLumaTaskContentRequest(
-            details.Title, details.Description, details.Version, TaskPriority.High);
+            details.Title, details.Problem, details.Version, TaskPriority.High, ExpectedResult: details.ExpectedResult);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             fixture.CreateStore(fixture.Assignee).UpdateContentAsync(taskId, request));
@@ -1492,7 +1554,7 @@ public sealed class TaskStoreTests
         var before = await store.LoadDetailsAsync(taskId);
 
         await store.UpdateContentAsync(taskId, new(
-            before.Title, before.Description, before.Version, TaskPriority.High));
+            before.Title, before.Problem, before.Version, TaskPriority.High, ExpectedResult: before.ExpectedResult));
 
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
@@ -1506,7 +1568,7 @@ public sealed class TaskStoreTests
         var before = await store.LoadDetailsAsync(taskId);
 
         await store.UpdateContentAsync(taskId, new(
-            before.Title, before.Description, before.Version, TaskPriority.Medium));
+            before.Title, before.Problem, before.Version, TaskPriority.Medium, ExpectedResult: before.ExpectedResult));
 
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
@@ -1970,8 +2032,8 @@ public sealed class TaskStoreTests
         var task = await SeedTaskAsync(fixture, "Move project", project: first);
         var store = fixture.CreateStore(fixture.Creator);
 
-        var changed = await store.UpdateContentAsync(task.Id, new(task.Title, task.Description, task.Version, task.Priority, second.Id));
-        var removed = await store.UpdateContentAsync(task.Id, new(changed.Title, changed.Description, changed.Version, changed.Priority, null));
+        var changed = await store.UpdateContentAsync(task.Id, new(task.Title, task.Problem, task.Version, task.Priority, second.Id, task.ExpectedResult));
+        var removed = await store.UpdateContentAsync(task.Id, new(changed.Title, changed.Problem, changed.Version, changed.Priority, null, changed.ExpectedResult));
 
         Assert.Equal(second.Id, changed.ProjectId);
         Assert.Null(removed.ProjectId);
@@ -1987,7 +2049,7 @@ public sealed class TaskStoreTests
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             fixture.CreateStore(fixture.Assignee).UpdateContentAsync(
-                task.Id, new(task.Title, task.Description, task.Version, task.Priority, project.Id)));
+                task.Id, new(task.Title, task.Problem, task.Version, task.Priority, project.Id, task.ExpectedResult)));
     }
 
     [Fact]
@@ -2013,7 +2075,7 @@ public sealed class TaskStoreTests
         }
 
         await fixture.CreateStore(fixture.Creator).UpdateContentAsync(
-            task.Id, new(task.Title, task.Description, task.Version, task.Priority, project.Id));
+            task.Id, new(task.Title, task.Problem, task.Version, task.Priority, project.Id, task.ExpectedResult));
 
         await using var verify = fixture.CreateDbContext();
         var saved = await verify.Tasks.Include(item => item.Comments).SingleAsync(item => item.Id == task.Id);
@@ -2111,7 +2173,7 @@ public sealed class TaskStoreTests
         var task = await SeedTaskAsync(fixture, "Notify project");
 
         await fixture.CreateStore(fixture.Creator).UpdateContentAsync(
-            task.Id, new(task.Title, task.Description, task.Version, task.Priority, project.Id));
+            task.Id, new(task.Title, task.Problem, task.Version, task.Priority, project.Id, task.ExpectedResult));
 
         Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
@@ -2127,7 +2189,7 @@ public sealed class TaskStoreTests
         await doerStore.AcceptAsync(taskId);
         var accepted = await doerStore.LoadDetailsAsync(taskId);
         await makerStore.UpdateContentAsync(taskId, new(
-            "Updated launch notes", accepted.Description, accepted.Version, accepted.Priority, accepted.ProjectId));
+            "Updated launch notes", accepted.Problem, accepted.Version, accepted.Priority, accepted.ProjectId, accepted.ExpectedResult));
         var updated = await doerStore.LoadDetailsAsync(taskId);
         await doerStore.ChangeWorkStatusAsync(taskId, new(TaskWorkStatus.InProgress, updated.Version));
         await makerStore.AddCommentAsync(taskId, new("Please check the new scope."));
@@ -2304,7 +2366,8 @@ public sealed class TaskStoreTests
         var task = new LumaTask
         {
             Title = title,
-            Description = string.Empty,
+            Problem = string.Empty,
+            ExpectedResult = string.Empty,
             CreatorId = (creator ?? fixture.Creator).Id,
             AssigneeId = unassigned ? null : (assignee ?? fixture.Assignee).Id,
             ProjectId = project?.Id,

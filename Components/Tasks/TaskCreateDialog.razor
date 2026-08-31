@@ -32,10 +32,16 @@
                 }
             </label>
 
-            <label class="field">
-                <span>Description <em>optional</em></span>
-                <textarea rows="4" placeholder="Add helpful context or notes" @bind="Description"></textarea>
-            </label>
+            <div class="task-structured-fields">
+                <label class="field">
+                    <span>Problem <em>optional · Markdown</em></span>
+                    <textarea rows="3" maxlength="4000" placeholder="Describe the problem or work to be done" @bind="Problem"></textarea>
+                </label>
+                <label class="field">
+                    <span>Expected result <em>optional · Markdown</em></span>
+                    <textarea rows="3" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
+                </label>
+            </div>
 
             <div class="task-field-grid">
                 <div class="field task-assignee-field" @onclick:stopPropagation="true">
@@ -130,7 +136,8 @@
 
     private readonly List<AssigneeOption> Assignees = [];
     private string Title = string.Empty;
-    private string Description = string.Empty;
+    private string Problem = string.Empty;
+    private string ExpectedResult = string.Empty;
     private string TitleError = string.Empty;
     private string DeadlineError = string.Empty;
     private Guid? SelectedAssigneeId;
@@ -203,12 +210,13 @@
 
         await Created.InvokeAsync(new CreateLumaTaskRequest(
             Title.Trim(),
-            Description.Trim(),
+            Problem.Trim(),
             SelectedAssigneeId,
             Deadline,
             Priority,
             SelectedInvitationEmail,
-            SelectedProjectId));
+            SelectedProjectId,
+            ExpectedResult.Trim()));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();

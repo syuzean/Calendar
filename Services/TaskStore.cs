@@ -10,12 +10,13 @@ namespace Calendar.Services;
 
 public sealed record CreateLumaTaskRequest(
     string Title,
-    string? Description,
+    string? Problem,
     Guid? AssigneeId,
     DateOnly? Deadline,
     TaskPriority Priority = TaskPriority.None,
     string? AssigneeEmail = null,
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    string? ExpectedResult = null);
 
 public sealed record RequestTaskDeadlineChange(
     DateOnly? ProposedDeadline,
@@ -23,10 +24,11 @@ public sealed record RequestTaskDeadlineChange(
 
 public sealed record UpdateLumaTaskContentRequest(
     string Title,
-    string? Description,
+    string? Problem,
     Guid Version,
     TaskPriority? Priority = null,
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    string? ExpectedResult = null);
 
 public enum TaskDeadlineFilter
 {
@@ -127,7 +129,8 @@ public sealed record RelatedLumaTask(
 public sealed record LumaTaskDetails(
     Guid Id,
     string Title,
-    string Description,
+    string Problem,
+    string ExpectedResult,
     string CreatorName,
     string AssigneeName,
     bool IsInvited,
@@ -210,7 +213,8 @@ public sealed class TaskStore(
         {
             Id = Guid.NewGuid(),
             Title = request.Title.Trim(),
-            Description = request.Description?.Trim() ?? string.Empty,
+            Problem = request.Problem?.Trim() ?? string.Empty,
+            ExpectedResult = request.ExpectedResult?.Trim() ?? string.Empty,
             CreatorId = creatorId,
             AssigneeId = doer?.Id,
             ProjectId = request.ProjectId,
@@ -401,7 +405,8 @@ public sealed class TaskStore(
                 item.AssigneeId,
                 item.Id,
                 item.Title,
-                item.Description,
+                item.Problem,
+                item.ExpectedResult,
                 CreatorName = item.Creator!.Name,
                 AssigneeName = item.Assignee != null
                     ? item.Assignee.Name
@@ -429,7 +434,8 @@ public sealed class TaskStore(
         return new LumaTaskDetails(
             task.Id,
             task.Title,
-            task.Description,
+            task.Problem,
+            task.ExpectedResult,
             task.CreatorName,
             task.AssigneeName,
             task.IsInvited,
@@ -639,7 +645,8 @@ public sealed class TaskStore(
         EnsureCurrentVersion(task, request.Version);
 
         var title = request.Title.Trim();
-        var description = request.Description?.Trim() ?? string.Empty;
+        var problem = request.Problem?.Trim() ?? string.Empty;
+        var expectedResult = request.ExpectedResult?.Trim() ?? string.Empty;
         var priority = request.Priority ?? task.Priority;
         LumaProject? updatedProject = null;
         if (request.ProjectId is { } projectId)
@@ -648,14 +655,16 @@ public sealed class TaskStore(
                 ?? throw new ValidationException("Choose an existing LUMA project.");
         }
         var titleChanged = !string.Equals(task.Title, title, StringComparison.Ordinal);
-        var descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
+        var problemChanged = !string.Equals(task.Problem, problem, StringComparison.Ordinal);
+        var expectedResultChanged = !string.Equals(task.ExpectedResult, expectedResult, StringComparison.Ordinal);
         var priorityChanged = task.Priority != priority;
         var projectChanged = task.ProjectId != request.ProjectId;
-        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged)
+        if (!titleChanged && !problemChanged && !expectedResultChanged && !priorityChanged && !projectChanged)
             return ToDetails(task, currentUserId);
 
         task.Title = title;
-        task.Description = description;
+        task.Problem = problem;
+        task.ExpectedResult = expectedResult;
         task.Priority = priority;
         task.ProjectId = request.ProjectId;
         task.Project = updatedProject;
@@ -776,7 +785,7 @@ public sealed class TaskStore(
         {
             await taskNotifier.NotifyCreatedAsync(new TaskCreatedNotification(
                 task.Title,
-                task.Description,
+                StructuredTaskSummary(task),
                 maker.Name,
                 doer.Name,
                 task.Deadline,
@@ -802,7 +811,7 @@ public sealed class TaskStore(
         {
             await taskNotifier.NotifyCreatedAsync(new TaskCreatedNotification(
                 task.Title,
-                task.Description,
+                StructuredTaskSummary(task),
                 maker.Name,
                 recipientEmail,
                 task.Deadline,
@@ -917,6 +926,16 @@ public sealed class TaskStore(
 
     private static TaskUser User(AppUser user) => new(user.Id, user.Name, user.Email);
 
+    private static string StructuredTaskSummary(LumaTask task)
+    {
+        var sections = new List<string>();
+        if (!string.IsNullOrWhiteSpace(task.Problem))
+            sections.Add($"Problem\n{task.Problem}");
+        if (!string.IsNullOrWhiteSpace(task.ExpectedResult))
+            sections.Add($"Expected result\n{task.ExpectedResult}");
+        return string.Join("\n\n", sections);
+    }
+
     private static void QueueInboxItem(
         CalendarDbContext db,
         LumaTask task,
@@ -992,7 +1011,8 @@ public sealed class TaskStore(
     private static LumaTaskDetails ToDetails(LumaTask task, Guid currentUserId) => new(
         task.Id,
         task.Title,
-        task.Description,
+        task.Problem,
+        task.ExpectedResult,
         task.Creator!.Name,
         task.Assignee?.Name ?? task.Invitation?.RecipientEmail ?? "Unassigned",
         task.AssigneeId is null && task.Invitation?.Status == TaskInvitationStatus.Pending,
@@ -1035,8 +1055,10 @@ public sealed class TaskStore(
         else if (request.Title.Trim().Length > 180)
             errors.Add("Task title cannot exceed 180 characters.");
 
-        if ((request.Description?.Length ?? 0) > 4000)
-            errors.Add("Task description cannot exceed 4000 characters.");
+        if ((request.Problem?.Length ?? 0) > 4000)
+            errors.Add("Task problem cannot exceed 4000 characters.");
+        if ((request.ExpectedResult?.Length ?? 0) > 4000)
+            errors.Add("Task expected result cannot exceed 4000 characters.");
         if (request.AssigneeId == Guid.Empty)
             errors.Add("Choose a valid task assignee.");
         else if (request.AssigneeId is null && !string.IsNullOrWhiteSpace(request.AssigneeEmail) &&
@@ -1078,8 +1100,10 @@ public sealed class TaskStore(
         else if (request.Title.Trim().Length > 180)
             errors.Add("Task title cannot exceed 180 characters.");
 
-        if ((request.Description?.Trim().Length ?? 0) > 4000)
-            errors.Add("Task description cannot exceed 4000 characters.");
+        if ((request.Problem?.Trim().Length ?? 0) > 4000)
+            errors.Add("Task problem cannot exceed 4000 characters.");
+        if ((request.ExpectedResult?.Trim().Length ?? 0) > 4000)
+            errors.Add("Task expected result cannot exceed 4000 characters.");
         if (request.Priority is not null && !Enum.IsDefined(request.Priority.Value))
             errors.Add("Choose a valid task priority.");
         if (request.ProjectId == Guid.Empty)

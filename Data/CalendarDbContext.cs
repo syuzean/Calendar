@@ -81,7 +81,8 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
         modelBuilder.Entity<LumaTask>(entity =>
         {
             entity.Property(task => task.Title).HasMaxLength(180);
-            entity.Property(task => task.Description).HasMaxLength(4000);
+            entity.Property(task => task.Problem).HasMaxLength(4000);
+            entity.Property(task => task.ExpectedResult).HasMaxLength(4000);
             entity.Property(task => task.DeadlineChangeComment).HasMaxLength(1000);
             entity.Property(task => task.Deadline).HasColumnType("date");
             entity.Property(task => task.RequestedDeadline).HasColumnType("date");

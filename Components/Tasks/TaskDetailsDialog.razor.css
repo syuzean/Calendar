@@ -85,7 +85,22 @@
     padding: 15px;
 }
 
-.task-description > span,
+.task-structured-description {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.task-structured-description > article {
+    min-width: 0;
+}
+
+.task-structured-description > article + article {
+    border-left: 1px solid #e8e3ed;
+    padding-left: 14px;
+}
+
+.task-structured-description article > span,
 .task-detail-grid dt {
     color: #817989;
     font-size: 8px;
@@ -94,7 +109,8 @@
     text-transform: uppercase;
 }
 
-.task-description p {
+.task-description p,
+.task-markdown {
     margin: 8px 0 0;
     color: #3d3843;
     font-size: 11px;
@@ -166,6 +182,32 @@
     background: #f1edf5;
     color: #796f83;
 }
+
+.task-markdown { white-space: normal; }
+
+.task-markdown ::deep > :first-child { margin-top: 8px; }
+.task-markdown ::deep > :last-child { margin-bottom: 0; }
+.task-markdown ::deep p { margin: 8px 0; }
+.task-markdown ::deep h1,
+.task-markdown ::deep h2,
+.task-markdown ::deep h3,
+.task-markdown ::deep h4,
+.task-markdown ::deep h5,
+.task-markdown ::deep h6 { margin: 10px 0 6px; color: #332e38; line-height: 1.35; }
+.task-markdown ::deep h1 { font-size: 15px; }
+.task-markdown ::deep h2 { font-size: 14px; }
+.task-markdown ::deep h3 { font-size: 13px; }
+.task-markdown ::deep h4,
+.task-markdown ::deep h5,
+.task-markdown ::deep h6 { font-size: 12px; }
+.task-markdown ::deep ul,
+.task-markdown ::deep ol { margin: 8px 0; padding-left: 19px; }
+.task-markdown ::deep li { margin: 3px 0; }
+.task-markdown ::deep blockquote { margin: 8px 0; border-left: 3px solid #cfc2f2; padding: 3px 0 3px 10px; color: #675d70; }
+.task-markdown ::deep code { border-radius: 5px; background: #eeeaf2; padding: 1px 4px; color: #563b87; font-size: .92em; }
+.task-markdown ::deep pre { overflow-x: auto; border-radius: 8px; background: #2f2936; padding: 9px; color: #f5f1fa; }
+.task-markdown ::deep pre code { background: transparent; padding: 0; color: inherit; }
+.task-markdown ::deep a { color: #6844dc; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 
 .task-detail-status.unassigned {
     background: #f0edf4;
@@ -377,6 +419,15 @@
         width: 100%;
         border-radius: 0;
         padding: 21px;
+    }
+
+    .task-structured-description { grid-template-columns: 1fr; }
+
+    .task-structured-description > article + article {
+        border-top: 1px solid #e8e3ed;
+        border-left: 0;
+        padding-top: 14px;
+        padding-left: 0;
     }
 
     .task-detail-grid {

@@ -1,5 +1,6 @@
 @using global::Calendar.Services
 @using global::Calendar.Models
+@inject ITaskMarkdownRenderer MarkdownRenderer
 
 <div class="dialog-backdrop task-details-backdrop" role="presentation" @onclick="Close">
     <section class="event-dialog task-details-dialog" role="dialog" aria-modal="true"
@@ -29,11 +30,29 @@
         else if (Details is not null)
         {
             <div class="task-details-content">
-                <section class="task-description" aria-labelledby="task-description-heading">
-                    <span id="task-description-heading">Description</span>
-                    <p class="@(string.IsNullOrWhiteSpace(Details.Description) ? "empty" : null)">
-                        @(string.IsNullOrWhiteSpace(Details.Description) ? "No description provided." : Details.Description)
-                    </p>
+                <section class="task-description task-structured-description" aria-label="Task problem and expected result">
+                    <article>
+                        <span>Problem</span>
+                        @if (string.IsNullOrWhiteSpace(Details.Problem))
+                        {
+                            <p class="empty">No problem provided.</p>
+                        }
+                        else
+                        {
+                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(Details.Problem))</div>
+                        }
+                    </article>
+                    <article>
+                        <span>Expected result</span>
+                        @if (string.IsNullOrWhiteSpace(Details.ExpectedResult))
+                        {
+                            <p class="empty">No expected result provided.</p>
+                        }
+                        else
+                        {
+                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(Details.ExpectedResult))</div>
+                        }
+                    </article>
                 </section>
 
                 <dl class="task-detail-grid">

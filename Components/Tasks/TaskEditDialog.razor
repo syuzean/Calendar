@@ -8,7 +8,7 @@
             <div>
                 <span class="eyebrow">EDIT TASK</span>
                 <h2 id="task-edit-title">Update task details</h2>
-                <p>Update the title, description, or priority.</p>
+                <p>Update the title, structured details, or priority.</p>
             </div>
             <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
         </header>
@@ -28,10 +28,16 @@
             </label>
             <TaskProjectPicker @bind-Value="ProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
-            <label class="field">
-                <span>Description <em>optional</em></span>
-                <textarea rows="5" maxlength="4000" @bind="Description"></textarea>
-            </label>
+            <div class="task-structured-fields">
+                <label class="field">
+                    <span>Problem <em>optional · Markdown</em></span>
+                    <textarea rows="4" maxlength="4000" placeholder="Describe the problem or work to be done" @bind="Problem"></textarea>
+                </label>
+                <label class="field">
+                    <span>Expected result <em>optional · Markdown</em></span>
+                    <textarea rows="4" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
+                </label>
+            </div>
             <div class="dialog-actions">
                 <span class="action-spacer"></span>
                 <button class="secondary-button" type="button" disabled="@IsSubmitting" @onclick="Cancel">Cancel</button>
@@ -49,7 +55,8 @@
     [Parameter] public EventCallback<UpdateLumaTaskContentRequest> SubmitRequested { get; set; }
 
     private string Title = string.Empty;
-    private string Description = string.Empty;
+    private string Problem = string.Empty;
+    private string ExpectedResult = string.Empty;
     private string TitleError = string.Empty;
     private TaskPriority Priority;
     private Guid? ProjectId;
@@ -57,7 +64,8 @@
     protected override void OnInitialized()
     {
         Title = Details.Title;
-        Description = Details.Description;
+        Problem = Details.Problem;
+        ExpectedResult = Details.ExpectedResult;
         Priority = Details.Priority;
         ProjectId = Details.ProjectId;
     }
@@ -67,7 +75,7 @@
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
         if (TitleError.Length > 0) return;
         await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
-            Title.Trim(), Description.Trim(), Details.Version, Priority, ProjectId));
+            Title.Trim(), Problem.Trim(), Details.Version, Priority, ProjectId, ExpectedResult.Trim()));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();
