@@ -45,9 +45,11 @@ public enum TaskSortOrder
 
 public enum TaskRelationFilter
 {
-    AllRelated,
+    AllTasks,
+    OnlyMe,
     AssignedToMe,
-    AssignedByMe
+    AssignedByMe,
+    AllRelated = AllTasks
 }
 
 public sealed record TaskListQuery(
@@ -57,7 +59,7 @@ public sealed record TaskListQuery(
     TaskPriority? Priority = null,
     TaskDeadlineFilter Deadline = TaskDeadlineFilter.All,
     TaskSortOrder Sort = TaskSortOrder.DeadlineNearest,
-    TaskRelationFilter Relation = TaskRelationFilter.AllRelated,
+    TaskRelationFilter Relation = TaskRelationFilter.AllTasks,
     Guid? ProjectId = null,
     Guid? AssigneeId = null);
 
@@ -138,7 +140,8 @@ public sealed record LumaTaskDetails(
     bool CanAccept,
     bool CanReviewDeadlineChange,
     bool CanEdit,
-    bool CanManageWorkStatus);
+    bool CanManageWorkStatus,
+    bool CanComment);
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -267,10 +270,11 @@ public sealed class TaskStore(
         var currentUserId = await GetCurrentUserIdAsync();
         var effectiveQuery = query ?? new TaskListQuery();
         await using var db = await dbFactory.CreateDbContextAsync();
-        var tasks = db.Tasks.AsNoTracking()
-            .Where(task => task.CreatorId == currentUserId || task.AssigneeId == currentUserId);
+        var tasks = db.Tasks.AsNoTracking();
         tasks = effectiveQuery.Relation switch
         {
+            TaskRelationFilter.OnlyMe => tasks.Where(task =>
+                task.CreatorId == currentUserId || task.AssigneeId == currentUserId),
             TaskRelationFilter.AssignedToMe => tasks.Where(task => task.AssigneeId == currentUserId),
             TaskRelationFilter.AssignedByMe => tasks.Where(task => task.CreatorId == currentUserId),
             _ => tasks
@@ -395,8 +399,6 @@ public sealed class TaskStore(
             .SingleOrDefaultAsync();
 
         if (task is null) throw new LumaTaskNotFoundException();
-        if (task.CreatorId != currentUserId && task.AssigneeId != currentUserId)
-            throw new UnauthorizedAccessException("You do not have access to this task.");
 
         return new LumaTaskDetails(
             task.Id,
@@ -420,7 +422,8 @@ public sealed class TaskStore(
             task.AssigneeId == currentUserId,
             task.CreatorId == currentUserId,
             task.CreatorId == currentUserId,
-            task.AssigneeId == currentUserId);
+            task.AssigneeId == currentUserId,
+            task.CreatorId == currentUserId || task.AssigneeId == currentUserId);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -1017,7 +1020,8 @@ public sealed class TaskStore(
         task.AssigneeId == currentUserId,
         task.CreatorId == currentUserId,
         task.CreatorId == currentUserId,
-        task.AssigneeId == currentUserId);
+        task.AssigneeId == currentUserId,
+        task.CreatorId == currentUserId || task.AssigneeId == currentUserId);
 
     private async Task<Guid> GetCurrentUserIdAsync()
     {

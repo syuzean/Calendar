@@ -98,7 +98,10 @@
                     </section>
                 }
 
-                <TaskCommentsSection TaskId="@Details.Id" />
+                @if (Details.CanComment)
+                {
+                    <TaskCommentsSection TaskId="@Details.Id" />
+                }
             </div>
         }
 

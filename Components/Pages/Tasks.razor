@@ -96,8 +96,8 @@
                                    @bind="SearchText" @bind:event="oninput" @bind:after="ApplyFiltersAsync" />
                         </label>
                         <label><span>Relation</span><select @bind="RelationFilter" @bind:after="ApplyFiltersAsync">
-                            <option value="AllRelated">All related</option><option value="AssignedToMe">Assigned to me</option>
-                            <option value="AssignedByMe">Assigned by me</option>
+                            <option value="AllTasks">All Tasks</option>
+                            <option value="OnlyMe">Only Me</option>
                         </select></label>
                         <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
                             <option value="">All</option><option value="ToDo">To Do</option>
@@ -273,7 +273,7 @@
                     <div role="tabpanel" class="task-panel" aria-label="Related Tasks">
                         @if (RelatedTasks.Count == 0)
                         {
-                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "No tasks related to you yet.")" />
+                            <TaskEmptyState Message="@(HasActiveFilters ? "No tasks match these filters." : "No company tasks yet.")" />
                         }
                         else
                         {
@@ -403,7 +403,7 @@
     private string WorkStatusFilter = string.Empty;
     private string AssignmentStatusFilter = string.Empty;
     private string PriorityFilter = string.Empty;
-    private string RelationFilter = nameof(TaskRelationFilter.AllRelated);
+    private string RelationFilter = nameof(TaskRelationFilter.AllTasks);
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
@@ -413,7 +413,7 @@
         WorkStatusFilter.Length > 0 ||
         AssignmentStatusFilter.Length > 0 ||
         PriorityFilter.Length > 0 ||
-        RelationFilter != nameof(TaskRelationFilter.AllRelated) ||
+        RelationFilter != nameof(TaskRelationFilter.AllTasks) ||
         DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
         SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
@@ -581,7 +581,7 @@
         WorkStatusFilter = string.Empty;
         AssignmentStatusFilter = string.Empty;
         PriorityFilter = string.Empty;
-        RelationFilter = nameof(TaskRelationFilter.AllRelated);
+        RelationFilter = nameof(TaskRelationFilter.AllTasks);
         DeadlineFilter = nameof(TaskDeadlineFilter.All);
         SortOrder = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(showLoading: false);
@@ -594,7 +594,7 @@
         ParseOptional<TaskPriority>(PriorityFilter),
         Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
         Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
-        Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllRelated);
+        Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllTasks);
 
     private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
@@ -981,17 +981,23 @@
             ? "Personal task"
             : task.IsAssignedToCurrentUser
                 ? $"Assigned to you by {task.CreatorName}"
-                : $"Assigned by you to {task.AssigneeName}";
+                : task.IsCreatedByCurrentUser
+                    ? $"Assigned by you to {task.AssigneeName}"
+                    : $"{task.CreatorName} → {task.AssigneeName}";
 
     private static string RelationshipClass(RelatedLumaTask task) =>
         task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
             ? "personal"
-            : task.IsAssignedToCurrentUser ? "assigned" : "created";
+            : task.IsAssignedToCurrentUser
+                ? "assigned"
+                : task.IsCreatedByCurrentUser ? "created" : "company";
 
     private static string RelationshipMark(RelatedLumaTask task) =>
         task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
             ? "•"
-            : task.IsAssignedToCurrentUser ? "✓" : "↗";
+            : task.IsAssignedToCurrentUser
+                ? "✓"
+                : task.IsCreatedByCurrentUser ? "↗" : "◇";
 
     private IReadOnlyList<BoardTaskItem> CurrentBoardItems() => RelatedTasks
         .Select(task => new BoardTaskItem(

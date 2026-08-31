@@ -718,6 +718,11 @@
     font-size: 18px;
 }
 
+.task-card-mark.company {
+    background: linear-gradient(145deg, #f4f2f8, #ece9f2);
+    color: #766f80;
+}
+
 .task-card-copy {
     display: flex;
     flex-direction: column;

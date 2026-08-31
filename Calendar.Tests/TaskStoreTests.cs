@@ -441,15 +441,19 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task UnrelatedUser_CannotOpenTaskDetails()
+    public async Task UnrelatedAuthenticatedUser_CanOpenTaskDetailsReadOnly()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
 
-        var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId));
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
 
-        Assert.Contains("do not have access", exception.Message);
+        Assert.Equal(taskId, details.Id);
+        Assert.False(details.CanAccept);
+        Assert.False(details.CanReviewDeadlineChange);
+        Assert.False(details.CanEdit);
+        Assert.False(details.CanManageWorkStatus);
+        Assert.False(details.CanComment);
     }
 
     [Fact]
@@ -1648,15 +1652,39 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task UnifiedList_ExcludesUnrelatedTasks()
+    public async Task AllTasks_IncludesTasksUnrelatedToCurrentUser()
     {
         var fixture = await TestFixture.CreateAsync();
-        await SeedTaskAsync(
+        var unrelated = await SeedTaskAsync(
             fixture, "Unrelated", creator: fixture.Assignee, assignee: fixture.Unrelated);
 
         var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync();
 
-        Assert.Empty(tasks);
+        var result = Assert.Single(tasks);
+        Assert.Equal(unrelated.Id, result.Id);
+        Assert.False(result.IsCreatedByCurrentUser);
+        Assert.False(result.IsAssignedToCurrentUser);
+        Assert.False(result.CanManageWorkStatus);
+    }
+
+    [Fact]
+    public async Task OnlyMe_ReturnsCreatorOrAssigneeTasksAndExcludesOtherCompanyTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var created = await SeedTaskAsync(fixture, "Created by me");
+        var assigned = await SeedTaskAsync(
+            fixture, "Assigned to me", creator: fixture.Assignee, assignee: fixture.Creator);
+        await SeedTaskAsync(
+            fixture, "Other company task", creator: fixture.Assignee, assignee: fixture.Unrelated);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
+            new(Relation: TaskRelationFilter.OnlyMe));
+
+        Assert.Equal(2, tasks.Count);
+        Assert.Contains(tasks, task => task.Id == created.Id);
+        Assert.Contains(tasks, task => task.Id == assigned.Id);
+        Assert.All(tasks, task => Assert.True(
+            task.IsCreatedByCurrentUser || task.IsAssignedToCurrentUser));
     }
 
     [Fact]
