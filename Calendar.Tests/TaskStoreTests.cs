@@ -727,7 +727,7 @@ public sealed class TaskStoreTests
         Assert.Equal(first.AcceptedAt, second.AcceptedAt);
         Assert.Equal(firstVersion, persisted.Version);
         Assert.Equal(TaskAssignmentStatus.Accepted, persisted.AssignmentStatus);
-        Assert.Single(fixture.Notifier.AcceptedNotifications);
+        Assert.Empty(fixture.Notifier.AcceptedNotifications);
     }
 
     [Fact]
@@ -763,20 +763,14 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task TaskAcceptance_NotifiesOnlyTaskMaker()
+    public async Task TaskAcceptance_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
 
         await fixture.CreateStore(fixture.Assignee).AcceptAsync(taskId);
 
-        var notification = Assert.Single(fixture.Notifier.AcceptedNotifications);
-        Assert.Equal("Prepare launch notes", notification.TaskTitle);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Maker, recipient.Role);
-        Assert.Equal(fixture.Creator.Email, recipient.Email);
-        Assert.DoesNotContain(notification.Recipients, item => item.Email == fixture.Assignee.Email);
-        Assert.NotEqual(default, notification.AcceptedAt);
+        Assert.Empty(fixture.Notifier.AcceptedNotifications);
     }
 
     [Fact]
@@ -807,7 +801,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task NotificationFailure_DoesNotUndoTaskAcceptance()
+    public async Task TaskAcceptance_DoesNotInvokeEmailNotifier()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
@@ -819,7 +813,8 @@ public sealed class TaskStoreTests
         await using var db = fixture.CreateDbContext();
         Assert.Equal(TaskAssignmentStatus.Accepted, (await db.Tasks.SingleAsync()).AssignmentStatus);
         Assert.Equal(TaskAssignmentStatus.Accepted, accepted.AssignmentStatus);
-        Assert.Contains("notification emails", store.LastNotice);
+        Assert.Empty(fixture.Notifier.AcceptedNotifications);
+        Assert.Null(store.LastNotice);
     }
 
     [Fact]
@@ -1098,9 +1093,7 @@ public sealed class TaskStoreTests
 
         Assert.Equal(before.Title, updated.Title);
         Assert.Equal("A more useful description.", updated.Description);
-        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
-        Assert.False(notification.Changes.TitleChanged);
-        Assert.True(notification.Changes.DescriptionChanged);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
 
     [Fact]
@@ -1186,7 +1179,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task MakerEdit_NotifiesOnlyDoerWithChangedFields()
+    public async Task MakerEdit_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
@@ -1195,12 +1188,7 @@ public sealed class TaskStoreTests
 
         await store.UpdateContentAsync(taskId, new("Revised title", before.Description, before.Version));
 
-        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Doer, recipient.Role);
-        Assert.Equal(fixture.Assignee.Email, recipient.Email);
-        Assert.True(notification.Changes.TitleChanged);
-        Assert.False(notification.Changes.DescriptionChanged);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
 
     [Fact]
@@ -1263,7 +1251,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task DoerStatusChange_NotifiesOnlyMaker()
+    public async Task DoerStatusChange_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
@@ -1272,16 +1260,11 @@ public sealed class TaskStoreTests
 
         await store.ChangeWorkStatusAsync(taskId, new(TaskWorkStatus.InProgress, accepted.Version));
 
-        var notification = Assert.Single(fixture.Notifier.WorkStatusNotifications);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Maker, recipient.Role);
-        Assert.Equal(fixture.Creator.Email, recipient.Email);
-        Assert.Equal(TaskWorkStatus.ToDo, notification.PreviousStatus);
-        Assert.Equal(TaskWorkStatus.InProgress, notification.NewStatus);
+        Assert.Empty(fixture.Notifier.WorkStatusNotifications);
     }
 
     [Fact]
-    public async Task EmailFailure_DoesNotUndoEditOrStatusTransition()
+    public async Task EditAndStatusChange_DoNotInvokeEmailNotifier()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
@@ -1290,14 +1273,16 @@ public sealed class TaskStoreTests
         var before = await makerStore.LoadDetailsAsync(taskId);
         var edited = await makerStore.UpdateContentAsync(taskId, new("Persisted edit", before.Description, before.Version));
         Assert.Equal("Persisted edit", edited.Title);
-        Assert.Contains("notification email", makerStore.LastNotice);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
+        Assert.Null(makerStore.LastNotice);
 
         var doerStore = fixture.CreateStore(fixture.Assignee);
         var accepted = await doerStore.AcceptAsync(taskId);
         fixture.Notifier.FailWorkStatus = true;
         var started = await doerStore.ChangeWorkStatusAsync(taskId, new(TaskWorkStatus.InProgress, accepted.Version));
         Assert.Equal(TaskWorkStatus.InProgress, started.WorkStatus);
-        Assert.Contains("notification email", doerStore.LastNotice);
+        Assert.Empty(fixture.Notifier.WorkStatusNotifications);
+        Assert.Null(doerStore.LastNotice);
 
         await using var db = fixture.CreateDbContext();
         var saved = await db.Tasks.SingleAsync();
@@ -1385,7 +1370,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task MakerComment_NotifiesOnlyDoer()
+    public async Task MakerComment_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
@@ -1393,26 +1378,18 @@ public sealed class TaskStoreTests
 
         await store.AddCommentAsync(taskId, new("Maker comment"));
 
-        var notification = Assert.Single(fixture.Notifier.CommentNotifications);
-        Assert.Equal(TaskNotificationRole.Maker, notification.AuthorRole);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Doer, recipient.Role);
-        Assert.Equal(fixture.Assignee.Email, recipient.Email);
+        Assert.Empty(fixture.Notifier.CommentNotifications);
     }
 
     [Fact]
-    public async Task DoerComment_NotifiesOnlyMaker()
+    public async Task DoerComment_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
 
         await fixture.CreateStore(fixture.Assignee).AddCommentAsync(taskId, new("Doer comment"));
 
-        var notification = Assert.Single(fixture.Notifier.CommentNotifications);
-        Assert.Equal(TaskNotificationRole.Doer, notification.AuthorRole);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Maker, recipient.Role);
-        Assert.Equal(fixture.Creator.Email, recipient.Email);
+        Assert.Empty(fixture.Notifier.CommentNotifications);
     }
 
     [Fact]
@@ -1428,16 +1405,17 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task EmailFailure_DoesNotRemoveSavedComment()
+    public async Task Comment_DoesNotInvokeEmailNotifier()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
         var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
         fixture.Notifier.FailComment = true;
 
-        var comment = await store.AddCommentAsync(taskId, new("Saved before email."));
+        var comment = await store.AddCommentAsync(taskId, new("Saved without email."));
 
-        Assert.Contains("comment was saved", store.LastNotice, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(fixture.Notifier.CommentNotifications);
+        Assert.Null(store.LastNotice);
         await using var db = fixture.CreateDbContext();
         Assert.Equal(comment.Id, (await db.TaskComments.SingleAsync()).Id);
     }
@@ -1506,7 +1484,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task PriorityChange_NotifiesOnlyDoer()
+    public async Task PriorityChange_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var store = fixture.CreateStore(fixture.Creator);
@@ -1516,13 +1494,7 @@ public sealed class TaskStoreTests
         await store.UpdateContentAsync(taskId, new(
             before.Title, before.Description, before.Version, TaskPriority.High));
 
-        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
-        Assert.True(notification.Changes.PriorityChanged);
-        Assert.Equal(TaskPriority.None, notification.Changes.PreviousPriority);
-        Assert.Equal(TaskPriority.High, notification.Changes.UpdatedPriority);
-        var recipient = Assert.Single(notification.Recipients);
-        Assert.Equal(TaskNotificationRole.Doer, recipient.Role);
-        Assert.Equal(fixture.Assignee.Email, recipient.Email);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
 
     [Fact]
@@ -2132,7 +2104,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task ProjectChange_NotifiesOnlyDoerThroughTaskUpdated()
+    public async Task ProjectChange_DoesNotSendEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var project = await SeedProjectAsync(fixture, "LUMA Calendar");
@@ -2141,11 +2113,7 @@ public sealed class TaskStoreTests
         await fixture.CreateStore(fixture.Creator).UpdateContentAsync(
             task.Id, new(task.Title, task.Description, task.Version, task.Priority, project.Id));
 
-        var notification = Assert.Single(fixture.Notifier.UpdatedNotifications);
-        Assert.True(notification.Changes.ProjectChanged);
-        Assert.Equal("No project", notification.Changes.PreviousProject);
-        Assert.Equal("LUMA Calendar", notification.Changes.UpdatedProject);
-        Assert.Equal(fixture.Assignee.Email, Assert.Single(notification.Recipients).Email);
+        Assert.Empty(fixture.Notifier.UpdatedNotifications);
     }
 
     [Fact]
@@ -2208,7 +2176,7 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task TakingUnassignedTask_NotifiesMakerOnly()
+    public async Task TakingUnassignedTask_CreatesInboxForMakerButSendsNoEmail()
     {
         var fixture = await TestFixture.CreateAsync();
         var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
@@ -2220,6 +2188,8 @@ public sealed class TaskStoreTests
         await using var db = fixture.CreateDbContext();
         var item = Assert.Single(await db.InboxItems.ToListAsync());
         AssertInbox(item, InboxActivityType.TaskTaken, fixture.Unrelated, fixture.Creator, taskId);
+        Assert.Empty(fixture.Notifier.CreatedNotifications);
+        Assert.Empty(fixture.Notifier.AcceptedNotifications);
     }
 
     [Fact]

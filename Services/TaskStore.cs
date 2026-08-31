@@ -483,12 +483,9 @@ public sealed class TaskStore(
             task.CreatorId,
             InboxActivityType.TaskAccepted,
             $"{task.Assignee!.Name} accepted “{task.Title}”.");
-        var acceptedByThisOperation = false;
-
         try
         {
             await db.SaveChangesAsync();
-            acceptedByThisOperation = true;
         }
         catch (DbUpdateConcurrencyException exception)
         {
@@ -498,9 +495,6 @@ public sealed class TaskStore(
             if (task.AssignmentStatus != TaskAssignmentStatus.Accepted)
                 throw new ValidationException("The task changed before it could be accepted. Reopen it and try again.", exception);
         }
-
-        if (acceptedByThisOperation)
-            await NotifyAcceptedAfterCommitAsync(task);
 
         return ToDetails(task, currentUserId);
     }
@@ -660,19 +654,6 @@ public sealed class TaskStore(
         if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged)
             return ToDetails(task, currentUserId);
 
-        var changes = new TaskContentChangeSnapshot(
-            titleChanged,
-            task.Title,
-            title,
-            descriptionChanged,
-            task.Description,
-            description,
-            priorityChanged,
-            task.Priority,
-            priority,
-            projectChanged,
-            task.Project?.Name ?? "No project",
-            updatedProject?.Name ?? "No project");
         task.Title = title;
         task.Description = description;
         task.Priority = priority;
@@ -688,7 +669,6 @@ public sealed class TaskStore(
             InboxActivityType.TaskUpdated,
             $"{task.Creator!.Name} updated “{task.Title}”.");
         await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
-        await NotifyTaskUpdatedAfterCommitAsync(task, changes);
         return ToDetails(task, currentUserId);
     }
 
@@ -710,7 +690,6 @@ public sealed class TaskStore(
         if (!IsAllowedWorkStatusTransition(task.WorkStatus, request.WorkStatus))
             throw new ValidationException("That work-status transition is not available.");
 
-        var previousStatus = task.WorkStatus;
         task.WorkStatus = request.WorkStatus;
         task.Version = Guid.NewGuid();
 
@@ -722,7 +701,6 @@ public sealed class TaskStore(
             InboxActivityType.WorkStatusChanged,
             $"{task.Assignee!.Name} moved “{task.Title}” to {WorkStatusName(task.WorkStatus)}.");
         await SaveActionAsync(db, "The task changed before its progress could be updated. Reopen it and try again.");
-        await NotifyWorkStatusChangedAfterCommitAsync(task, previousStatus);
         return ToDetails(task, currentUserId);
     }
 
@@ -780,7 +758,6 @@ public sealed class TaskStore(
             InboxActivityType.CommentAdded,
             $"{author.Name} commented on “{task.Title}”.");
         await db.SaveChangesAsync();
-        await NotifyCommentAddedAfterCommitAsync(task, author, comment);
         return new LumaTaskCommentDetails(
             comment.Id,
             comment.TaskId,
@@ -838,33 +815,6 @@ public sealed class TaskStore(
         {
             logger.LogWarning(exception, "Task-invitation email could not be sent for task {TaskId}.", task.Id);
             LastNotice = "The task and invitation were created, but the invitation email could not be sent.";
-        }
-    }
-
-    private async Task NotifyAcceptedAfterCommitAsync(LumaTask task)
-    {
-        if (task.Assignee is null) return;
-        var maker = new TaskUser(task.Creator!.Id, task.Creator.Name, task.Creator.Email);
-        var doer = new TaskUser(task.Assignee!.Id, task.Assignee.Name, task.Assignee.Email);
-        var recipients = MakerRecipients(maker, doer);
-        if (recipients.Count == 0) return;
-
-        try
-        {
-            await taskNotifier.NotifyAcceptedAsync(new TaskAcceptedNotification(
-                task.Title,
-                maker.Name,
-                doer.Name,
-                task.Deadline,
-                task.AcceptedAt!.Value,
-                taskLinkBuilder.Task(task.Id),
-                recipients,
-                task.Project?.Name ?? string.Empty));
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Task-accepted notifications could not be sent for task {TaskId}.", task.Id);
-            LastNotice = "The task was accepted, but one or more notification emails could not be sent.";
         }
     }
 
@@ -952,103 +902,6 @@ public sealed class TaskStore(
         {
             logger.LogWarning(exception, "Deadline-change decline notification could not be sent for task {TaskId}.", task.Id);
             LastNotice = "The deadline change was declined, but its notification email could not be sent.";
-        }
-    }
-
-    private async Task NotifyTaskUpdatedAfterCommitAsync(LumaTask task, TaskContentChangeSnapshot changes)
-    {
-        if (task.Assignee is null) return;
-        var maker = User(task.Creator!);
-        var doer = User(task.Assignee!);
-        var recipients = DoerRecipients(maker, doer);
-        if (recipients.Count == 0) return;
-
-        try
-        {
-            await taskNotifier.NotifyUpdatedAsync(new TaskUpdatedNotification(
-                task.Title,
-                maker.Name,
-                doer.Name,
-                task.Deadline,
-                new TaskContentChanges(
-                    changes.TitleChanged,
-                    changes.PreviousTitle,
-                    changes.UpdatedTitle,
-                    changes.DescriptionChanged,
-                    changes.PreviousDescription,
-                    changes.UpdatedDescription,
-                    changes.PriorityChanged,
-                    changes.PreviousPriority,
-                    changes.UpdatedPriority,
-                    changes.ProjectChanged,
-                    changes.PreviousProject,
-                    changes.UpdatedProject),
-                taskLinkBuilder.Task(task.Id),
-                recipients,
-                task.Project?.Name ?? string.Empty));
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Task-updated notification could not be sent for task {TaskId}.", task.Id);
-            LastNotice = "The task was updated, but its notification email could not be sent.";
-        }
-    }
-
-    private async Task NotifyWorkStatusChangedAfterCommitAsync(LumaTask task, TaskWorkStatus previousStatus)
-    {
-        if (task.Assignee is null) return;
-        var maker = User(task.Creator!);
-        var doer = User(task.Assignee!);
-        var recipients = MakerRecipients(maker, doer);
-        if (recipients.Count == 0) return;
-
-        try
-        {
-            await taskNotifier.NotifyWorkStatusChangedAsync(new TaskWorkStatusChangedNotification(
-                task.Title,
-                maker.Name,
-                doer.Name,
-                previousStatus,
-                task.WorkStatus,
-                task.Deadline,
-                taskLinkBuilder.Task(task.Id),
-                recipients,
-                task.Project?.Name ?? string.Empty));
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Task work-status notification could not be sent for task {TaskId}.", task.Id);
-            LastNotice = "The task progress was updated, but its notification email could not be sent.";
-        }
-    }
-
-    private async Task NotifyCommentAddedAfterCommitAsync(LumaTask task, AppUser author, LumaTaskComment comment)
-    {
-        if (task.Assignee is null) return;
-        var maker = User(task.Creator!);
-        var doer = User(task.Assignee!);
-        IReadOnlyList<TaskNotificationRecipient> recipients = task.CreatorId == task.AssigneeId
-            ? []
-            : author.Id == task.CreatorId
-                ? DoerRecipients(maker, doer)
-                : MakerRecipients(maker, doer);
-        if (recipients.Count == 0) return;
-
-        try
-        {
-            await taskNotifier.NotifyCommentAddedAsync(new TaskCommentAddedNotification(
-                task.Title,
-                author.Name,
-                comment.Text,
-                author.Id == task.CreatorId ? TaskNotificationRole.Maker : TaskNotificationRole.Doer,
-                taskLinkBuilder.Task(task.Id),
-                recipients,
-                task.Project?.Name ?? string.Empty));
-        }
-        catch (Exception exception)
-        {
-            logger.LogWarning(exception, "Task-comment notification could not be sent for task {TaskId}.", task.Id);
-            LastNotice = "The comment was saved, but its notification email could not be sent.";
         }
     }
 
@@ -1328,19 +1181,6 @@ public sealed class TaskStore(
         string.Equals(address.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private sealed record TaskUser(Guid Id, string Name, string Email);
-    private sealed record TaskContentChangeSnapshot(
-        bool TitleChanged,
-        string PreviousTitle,
-        string UpdatedTitle,
-        bool DescriptionChanged,
-        string PreviousDescription,
-        string UpdatedDescription,
-        bool PriorityChanged,
-        TaskPriority PreviousPriority,
-        TaskPriority UpdatedPriority,
-        bool ProjectChanged,
-        string PreviousProject,
-        string UpdatedProject);
     private sealed record DeadlineRequestSnapshot(
         DateOnly CurrentDeadline,
         DateOnly RequestedDeadline,
