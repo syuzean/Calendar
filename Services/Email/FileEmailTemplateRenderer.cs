@@ -90,7 +90,7 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["TaskTitle"] = data.TaskTitle,
             ["TaskMaker"] = data.TaskMaker,
             ["TaskDoer"] = data.TaskDoer,
-            ["Deadline"] = data.Deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+            ["Deadline"] = FormatTaskDeadline(data.Deadline),
             ["TitleChanged"] = data.TitleChanged ? "true" : string.Empty,
             ["PreviousTitle"] = data.PreviousTitle,
             ["UpdatedTitle"] = data.UpdatedTitle,
@@ -119,7 +119,7 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
             ["TaskDoer"] = data.TaskDoer,
             ["PreviousStatus"] = data.PreviousStatus,
             ["NewStatus"] = data.NewStatus,
-            ["Deadline"] = data.Deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+            ["Deadline"] = FormatTaskDeadline(data.Deadline),
             ["Project"] = data.ProjectName,
             ["HasProject"] = string.IsNullOrWhiteSpace(data.ProjectName) ? string.Empty : "true",
             ["TaskUrl"] = data.TaskUrl
@@ -192,7 +192,7 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         string description,
         string taskMaker,
         string taskDoer,
-        DateOnly deadline,
+        DateOnly? deadline,
         string taskUrl,
         DateTime? acceptedAt,
         string projectName) => new(StringComparer.Ordinal)
@@ -204,7 +204,7 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
         ["Description"] = description ?? string.Empty,
         ["TaskMaker"] = taskMaker,
         ["TaskDoer"] = taskDoer,
-        ["Deadline"] = deadline.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture),
+        ["Deadline"] = FormatTaskDeadline(deadline),
         ["Project"] = projectName ?? string.Empty,
         ["HasProject"] = string.IsNullOrWhiteSpace(projectName) ? string.Empty : "true",
         ["TaskUrl"] = taskUrl,
@@ -240,6 +240,9 @@ public sealed partial class FileEmailTemplateRenderer(string templateDirectory) 
 
     private static string DisplayDescription(string value) =>
         string.IsNullOrWhiteSpace(value) ? "No description" : value;
+
+    private static string FormatTaskDeadline(DateOnly? deadline) =>
+        deadline?.ToString("dddd, MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "No deadline";
 
     private static string Render(string template, IReadOnlyDictionary<string, string> values, bool htmlEncode)
     {

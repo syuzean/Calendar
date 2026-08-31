@@ -14,6 +14,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<LumaTaskComment> TaskComments => Set<LumaTaskComment>();
     public DbSet<TaskInvitation> TaskInvitations => Set<TaskInvitation>();
     public DbSet<LumaProject> Projects => Set<LumaProject>();
+    public DbSet<InboxItem> InboxItems => Set<InboxItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -157,6 +158,27 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 .WithMany(user => user.CreatedProjects)
                 .HasForeignKey(project => project.CreatedByUserId)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<InboxItem>(entity =>
+        {
+            entity.ToTable("InboxItems", table =>
+                table.HasCheckConstraint("CK_InboxItems_ActivityType", "[ActivityType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8)"));
+            entity.Property(item => item.Message).HasMaxLength(500);
+            entity.HasIndex(item => new { item.RecipientUserId, item.ReadAt, item.CreatedAt });
+            entity.HasIndex(item => item.TaskId);
+            entity.HasOne(item => item.Recipient)
+                .WithMany(user => user.ReceivedInboxItems)
+                .HasForeignKey(item => item.RecipientUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(item => item.Actor)
+                .WithMany(user => user.AuthoredInboxItems)
+                .HasForeignKey(item => item.ActorUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(item => item.Task)
+                .WithMany(task => task.InboxItems)
+                .HasForeignKey(item => item.TaskId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

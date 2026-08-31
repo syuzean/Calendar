@@ -22,7 +22,7 @@ public sealed record TaskCreatedTemplateData(
     string Description,
     string TaskMaker,
     string TaskDoer,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     TaskPriority Priority,
     string TaskUrl,
     string ProjectName = "");
@@ -33,7 +33,7 @@ public sealed record TaskAcceptedTemplateData(
     string IntroText,
     string TaskTitle,
     string TaskDoer,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     DateTime AcceptedAt,
     string TaskUrl,
     string ProjectName = "");
@@ -83,7 +83,7 @@ public sealed record TaskUpdatedTemplateData(
     string TaskTitle,
     string TaskMaker,
     string TaskDoer,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     bool TitleChanged,
     string PreviousTitle,
     string UpdatedTitle,
@@ -108,7 +108,7 @@ public sealed record TaskWorkStatusChangedTemplateData(
     string TaskDoer,
     string PreviousStatus,
     string NewStatus,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     string TaskUrl,
     string ProjectName = "");
 

@@ -2148,6 +2148,151 @@ public sealed class TaskStoreTests
         Assert.Equal(fixture.Assignee.Email, Assert.Single(notification.Recipients).Email);
     }
 
+    [Fact]
+    public async Task TaskActivity_CreatesInboxItemsOnlyForTheOtherParty()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var doerStore = fixture.CreateStore(fixture.Assignee);
+        var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        await doerStore.AcceptAsync(taskId);
+        var accepted = await doerStore.LoadDetailsAsync(taskId);
+        await makerStore.UpdateContentAsync(taskId, new(
+            "Updated launch notes", accepted.Description, accepted.Version, accepted.Priority, accepted.ProjectId));
+        var updated = await doerStore.LoadDetailsAsync(taskId);
+        await doerStore.ChangeWorkStatusAsync(taskId, new(TaskWorkStatus.InProgress, updated.Version));
+        await makerStore.AddCommentAsync(taskId, new("Please check the new scope."));
+
+        await using var db = fixture.CreateDbContext();
+        var items = await db.InboxItems.OrderBy(item => item.CreatedAt).ToListAsync();
+        Assert.Collection(items,
+            item => AssertInbox(item, InboxActivityType.TaskAssigned, fixture.Creator, fixture.Assignee, taskId),
+            item => AssertInbox(item, InboxActivityType.TaskAccepted, fixture.Assignee, fixture.Creator, taskId),
+            item => AssertInbox(item, InboxActivityType.TaskUpdated, fixture.Creator, fixture.Assignee, taskId),
+            item => AssertInbox(item, InboxActivityType.WorkStatusChanged, fixture.Assignee, fixture.Creator, taskId),
+            item => AssertInbox(item, InboxActivityType.CommentAdded, fixture.Creator, fixture.Assignee, taskId));
+        Assert.DoesNotContain(items, item => item.RecipientUserId == fixture.Unrelated.Id);
+    }
+
+    [Fact]
+    public async Task DeadlineActions_CreateInboxItemsForTheReviewerAndDoer()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var doerStore = fixture.CreateStore(fixture.Assignee);
+        var declinedTaskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id) with { Title = "Declined request" });
+        await doerStore.RequestDeadlineChangeAsync(declinedTaskId, NewDeadlineRequest());
+        await makerStore.DeclineDeadlineChangeAsync(declinedTaskId);
+
+        var approvedTaskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id) with { Title = "Approved request" });
+        await doerStore.RequestDeadlineChangeAsync(approvedTaskId, NewDeadlineRequest(12));
+        await makerStore.ApproveDeadlineChangeAsync(approvedTaskId);
+
+        await using var db = fixture.CreateDbContext();
+        var deadlineItems = await db.InboxItems
+            .Where(item => item.ActivityType == InboxActivityType.DeadlineChangeRequested ||
+                           item.ActivityType == InboxActivityType.DeadlineChangeApproved ||
+                           item.ActivityType == InboxActivityType.DeadlineChangeDeclined)
+            .ToListAsync();
+        Assert.Equal(4, deadlineItems.Count);
+        Assert.Equal(2, deadlineItems.Count(item =>
+            item.ActivityType == InboxActivityType.DeadlineChangeRequested &&
+            item.RecipientUserId == fixture.Creator.Id));
+        Assert.Contains(deadlineItems, item =>
+            item.ActivityType == InboxActivityType.DeadlineChangeApproved &&
+            item.RecipientUserId == fixture.Assignee.Id);
+        Assert.Contains(deadlineItems, item =>
+            item.ActivityType == InboxActivityType.DeadlineChangeDeclined &&
+            item.RecipientUserId == fixture.Assignee.Id);
+    }
+
+    [Fact]
+    public async Task TakingUnassignedTask_NotifiesMakerOnly()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { AssigneeId = null, Deadline = null });
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+
+        await fixture.CreateStore(fixture.Unrelated).TakeAsync(taskId, new(details.Version));
+
+        await using var db = fixture.CreateDbContext();
+        var item = Assert.Single(await db.InboxItems.ToListAsync());
+        AssertInbox(item, InboxActivityType.TaskTaken, fixture.Unrelated, fixture.Creator, taskId);
+    }
+
+    [Fact]
+    public async Task SelfAssignedTask_DoesNotCreateInboxItems()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Creator.Id));
+        await store.AcceptAsync(taskId);
+        await store.AddCommentAsync(taskId, new("Personal note"));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.InboxItems.ToListAsync());
+    }
+
+    [Fact]
+    public async Task InboxStore_LoadsRecentAndMarksOneOrAllAsRead()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id));
+        await fixture.CreateStore(fixture.Assignee).AcceptAsync(taskId);
+        await makerStore.UpdateContentAsync(taskId, new(
+            "Inbox update", "Description", (await makerStore.LoadDetailsAsync(taskId)).Version));
+
+        var assigneeInbox = fixture.CreateInboxStore(fixture.Assignee);
+        var initial = await assigneeInbox.LoadRecentAsync();
+        Assert.Equal(2, initial.UnreadCount);
+        Assert.Equal(2, await assigneeInbox.GetUnreadCountAsync());
+        Assert.All(initial.Items, item => Assert.False(item.IsRead));
+        Assert.All(initial.Items, item => Assert.Equal(taskId, item.TaskId));
+
+        Assert.True(await assigneeInbox.MarkReadAsync(initial.Items[0].Id));
+        var afterOne = await assigneeInbox.LoadRecentAsync();
+        Assert.Equal(1, afterOne.UnreadCount);
+        Assert.Single(afterOne.Items, item => item.IsRead);
+
+        Assert.Equal(1, await assigneeInbox.MarkAllReadAsync());
+        var afterAll = await assigneeInbox.LoadRecentAsync();
+        Assert.Equal(0, afterAll.UnreadCount);
+        Assert.All(afterAll.Items, item => Assert.True(item.IsRead));
+    }
+
+    [Fact]
+    public async Task InboxStore_CannotMarkAnotherUsersItemRead()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+        Guid itemId;
+        await using (var db = fixture.CreateDbContext())
+            itemId = (await db.InboxItems.SingleAsync()).Id;
+
+        Assert.False(await fixture.CreateInboxStore(fixture.Unrelated).MarkReadAsync(itemId));
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.Null((await verify.InboxItems.SingleAsync()).ReadAt);
+    }
+
+    private static void AssertInbox(
+        InboxItem item,
+        InboxActivityType activityType,
+        AppUser actor,
+        AppUser recipient,
+        Guid taskId)
+    {
+        Assert.Equal(activityType, item.ActivityType);
+        Assert.Equal(actor.Id, item.ActorUserId);
+        Assert.Equal(recipient.Id, item.RecipientUserId);
+        Assert.Equal(taskId, item.TaskId);
+        Assert.False(string.IsNullOrWhiteSpace(item.Message));
+        Assert.Null(item.ReadAt);
+    }
+
     private static CreateLumaTaskRequest NewRequest(Guid assigneeId) => new(
         "  Prepare launch notes  ",
         "  Include the final checklist.  ",
@@ -2264,6 +2409,8 @@ public sealed class TaskStoreTests
                 Notifier,
                 new TestTaskLinkBuilder(),
                 NullLogger<TaskStore>.Instance);
+        public InboxStore CreateInboxStore(AppUser user) =>
+            new(new TestDbContextFactory(Options), new TestAuthenticationStateProvider(user));
 
         public static AppUser NewUser(string email, string name) => new()
         {

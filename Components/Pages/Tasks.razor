@@ -3,6 +3,7 @@
 @attribute [Authorize]
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject TaskStore TaskStore
+@inject InboxStore InboxStore
 @inject ProjectStore ProjectStore
 @inject IJSRuntime JS
 @using global::Calendar.Components.Projects
@@ -14,10 +15,10 @@
 
 <PageTitle>Tasks · Luma</PageTitle>
 
-<div class="calendar-app tasks-app">
+<div class="calendar-app tasks-app" @onkeydown="HandlePageKeyDown">
     <aside class="sidebar-panel tasks-sidebar">
         <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
-        <LumaSectionNav />
+        <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
         <div class="sidebar-footer">
             <span class="avatar">@Initials</span>
             <div><strong>@CurrentUserName</strong><small>Synced with MSSQL</small></div>
@@ -32,17 +33,29 @@
         <header class="tasks-header">
             <div class="tasks-mobile-navigation">
                 <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
-                <LumaSectionNav />
+                <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
             </div>
             <div class="tasks-heading-row">
                 <div>
                     <span class="eyebrow">WORKSPACE</span>
                     <h1>Tasks</h1>
                 </div>
-                <button class="primary-button tasks-create-button" type="button" @onclick="OpenPrimaryCreate">
-                    <span aria-hidden="true">+</span>
-                    @(ActiveTab == TaskListTab.Projects ? "Create project" : "Create task")
-                </button>
+                <div class="tasks-header-actions">
+                    <button class="tasks-inbox-button" type="button" @onclick="OpenInboxAsync"
+                            aria-label="@InboxButtonLabel" aria-expanded="@ShowInbox" title="Inbox">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                        </svg>
+                        @if (InboxUnreadCount > 0)
+                        {
+                            <span class="tasks-inbox-count">@(InboxUnreadCount > 99 ? "99+" : InboxUnreadCount)</span>
+                        }
+                    </button>
+                    <button class="primary-button tasks-create-button" type="button" @onclick="OpenPrimaryCreate">
+                        <span aria-hidden="true">+</span>
+                        @(ActiveTab == TaskListTab.Projects ? "Create project" : "Create task")
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -335,6 +348,73 @@
     </main>
 </div>
 
+@if (ShowInbox)
+{
+    <div class="tasks-inbox-backdrop" @onclick="CloseInbox" @onkeydown="HandlePageKeyDown">
+        <aside class="tasks-inbox-panel" aria-label="Inbox" @onclick:stopPropagation>
+            <header>
+                <div>
+                    <span class="eyebrow">TASK ACTIVITY</span>
+                    <h2>Inbox</h2>
+                </div>
+                <button type="button" class="tasks-inbox-close" aria-label="Close Inbox" @onclick="CloseInbox">×</button>
+            </header>
+            <div class="tasks-inbox-toolbar">
+                <span>@(InboxUnreadCount == 0 ? "You're all caught up" : $"{InboxUnreadCount} unread")</span>
+                <button type="button" disabled="@(InboxUnreadCount == 0 || IsInboxLoading)" @onclick="MarkAllInboxReadAsync">
+                    Mark all as read
+                </button>
+            </div>
+            <div class="tasks-inbox-list">
+                @if (IsInboxLoading)
+                {
+                    <div class="tasks-inbox-state"><span class="task-loader"></span><p>Loading activity…</p></div>
+                }
+                else if (!string.IsNullOrWhiteSpace(InboxError))
+                {
+                    <div class="tasks-inbox-state error"><strong>Inbox unavailable</strong><p>@InboxError</p></div>
+                }
+                else if (InboxItems.Count == 0)
+                {
+                    <div class="tasks-inbox-state">
+                        <span class="tasks-inbox-empty-icon" aria-hidden="true">✓</span>
+                        <strong>No activity yet</strong>
+                        <p>Task updates from your teammates will appear here.</p>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var item in InboxItems)
+                    {
+                        <article class="tasks-inbox-item @(item.IsRead ? null : "unread")">
+                            <button type="button" class="tasks-inbox-open" @onclick="() => OpenInboxItemAsync(item)">
+                                <span class="tasks-inbox-activity-icon" aria-hidden="true">@InboxActivityIcon(item.ActivityType)</span>
+                                <span class="tasks-inbox-copy">
+                                    <span>@item.Message</span>
+                                    <small>@FormatInboxTime(item.CreatedAt)</small>
+                                    @if (item.TaskId is not null)
+                                    {
+                                        <span class="tasks-inbox-view-task">View task <span aria-hidden="true">→</span></span>
+                                    }
+                                </span>
+                                @if (!item.IsRead)
+                                {
+                                    <span class="tasks-inbox-unread-dot" aria-label="Unread"></span>
+                                }
+                            </button>
+                            @if (!item.IsRead)
+                            {
+                                <button type="button" class="tasks-inbox-read" title="Mark as read"
+                                        aria-label="Mark this Inbox item as read" @onclick="() => MarkInboxReadAsync(item.Id)">✓</button>
+                            }
+                        </article>
+                    }
+                }
+            </div>
+        </aside>
+    </div>
+}
+
 @if (ShowCreateTask)
 {
     <TaskCreateDialog CancelRequested="CloseCreateTask" Created="HandleTaskCreated" ErrorMessage="@OperationError" />
@@ -416,6 +496,12 @@
     private string TaskEditError = string.Empty;
     private string BoardError = string.Empty;
     private string BoardNotice = string.Empty;
+    private bool ShowInbox;
+    private bool IsInboxLoading;
+    private string InboxError = string.Empty;
+    private int InboxUnreadCount;
+    private long InboxNavRefreshKey;
+    private IReadOnlyList<InboxItemSummary> InboxItems = [];
     private TaskListTab ActiveTab = TaskListTab.Tasks;
     private IReadOnlyList<RelatedLumaTask> RelatedTasks = [];
     private IReadOnlyList<TaskAssigneeFilterOption> AssigneeOptions = [];
@@ -433,6 +519,10 @@
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
+
+    private string InboxButtonLabel => InboxUnreadCount == 0
+        ? "Inbox"
+        : $"Inbox, {InboxUnreadCount} unread";
 
     private bool HasActiveFilters =>
         !string.IsNullOrWhiteSpace(SearchText) ||
@@ -460,7 +550,7 @@
     {
         var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         CurrentUserName = principal.Identity?.Name ?? "User";
-        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync(), LoadAssigneeOptionsAsync());
+        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync(), LoadAssigneeOptionsAsync(), LoadInboxAsync());
         if (LinkedTaskId is not null)
             await OpenTaskAsync(LinkedTaskId.Value);
     }
@@ -612,6 +702,74 @@
         {
             LoadError = exception.Message;
         }
+    }
+
+    private async Task OpenInboxAsync()
+    {
+        ShowInbox = true;
+        await LoadInboxAsync();
+    }
+
+    private void CloseInbox() => ShowInbox = false;
+
+    private async Task LoadInboxAsync()
+    {
+        IsInboxLoading = true;
+        InboxError = string.Empty;
+        try
+        {
+            var snapshot = await InboxStore.LoadRecentAsync();
+            InboxItems = snapshot.Items;
+            InboxUnreadCount = snapshot.UnreadCount;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            InboxError = exception.Message;
+        }
+        catch (Exception)
+        {
+            InboxError = "Task activity could not be loaded. Please try again.";
+        }
+        finally
+        {
+            IsInboxLoading = false;
+        }
+    }
+
+    private async Task MarkInboxReadAsync(Guid inboxItemId)
+    {
+        if (await InboxStore.MarkReadAsync(inboxItemId))
+        {
+            InboxNavRefreshKey++;
+            await LoadInboxAsync();
+        }
+    }
+
+    private async Task MarkAllInboxReadAsync()
+    {
+        await InboxStore.MarkAllReadAsync();
+        InboxNavRefreshKey++;
+        await LoadInboxAsync();
+    }
+
+    private async Task OpenInboxItemAsync(InboxItemSummary item)
+    {
+        if (!item.IsRead)
+        {
+            await InboxStore.MarkReadAsync(item.Id);
+            InboxNavRefreshKey++;
+        }
+        CloseInbox();
+        if (item.TaskId is { } taskId)
+            await OpenTaskAsync(taskId);
+        else
+            await LoadInboxAsync();
+    }
+
+    private void HandlePageKeyDown(KeyboardEventArgs args)
+    {
+        if (ShowInbox && args.Key == "Escape")
+            CloseInbox();
     }
 
     private async Task ClearFiltersAsync()
@@ -1038,6 +1196,28 @@
 
     private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
     private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
+    private static string InboxActivityIcon(InboxActivityType activityType) => activityType switch
+    {
+        InboxActivityType.CommentAdded => "✦",
+        InboxActivityType.WorkStatusChanged => "↗",
+        InboxActivityType.TaskAccepted => "✓",
+        InboxActivityType.TaskTaken => "✓",
+        InboxActivityType.DeadlineChangeRequested => "◷",
+        InboxActivityType.DeadlineChangeApproved => "✓",
+        InboxActivityType.DeadlineChangeDeclined => "×",
+        InboxActivityType.TaskUpdated => "✎",
+        _ => "+"
+    };
+
+    private static string FormatInboxTime(DateTime createdAt)
+    {
+        var local = createdAt.ToLocalTime();
+        var today = DateTime.Today;
+        if (local.Date == today) return $"Today · {local:h:mm tt}";
+        if (local.Date == today.AddDays(-1)) return $"Yesterday · {local:h:mm tt}";
+        return local.ToString("MMM d · h:mm tt");
+    }
+
     private static string ProjectCountLabel(ProjectSummary project) => project.TaskCount == 0
         ? "0 tasks"
         : $"{project.TaskCount} tasks · {project.DoneTaskCount} done";

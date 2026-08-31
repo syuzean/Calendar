@@ -17,4 +17,6 @@ public sealed class AppUser
     public ICollection<TaskInvitation> SentTaskInvitations { get; set; } = [];
     public ICollection<TaskInvitation> ClaimedTaskInvitations { get; set; } = [];
     public ICollection<LumaProject> CreatedProjects { get; set; } = [];
+    public ICollection<InboxItem> ReceivedInboxItems { get; set; } = [];
+    public ICollection<InboxItem> AuthoredInboxItems { get; set; } = [];
 }

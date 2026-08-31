@@ -56,6 +56,7 @@ namespace Calendar
             builder.Services.AddScoped<ITaskInvitationService, TaskInvitationService>();
             builder.Services.AddScoped<CalendarStore>();
             builder.Services.AddScoped<TaskStore>();
+            builder.Services.AddScoped<InboxStore>();
             builder.Services.AddScoped<ProjectStore>();
 
             var app = builder.Build();

@@ -31,6 +31,7 @@ public sealed record UpdateLumaTaskContentRequest(
 public enum TaskDeadlineFilter
 {
     All,
+    NoDeadline,
     Overdue,
     Today,
     ThisWeek
@@ -61,13 +62,18 @@ public sealed record TaskListQuery(
     TaskSortOrder Sort = TaskSortOrder.DeadlineNearest,
     TaskRelationFilter Relation = TaskRelationFilter.AllTasks,
     Guid? ProjectId = null,
-    Guid? AssigneeId = null);
+    Guid? AssigneeId = null,
+    bool UnassignedOnly = false);
 
 public sealed record ChangeTaskWorkStatusRequest(
     TaskWorkStatus WorkStatus,
     Guid Version);
 
+public sealed record TakeLumaTaskRequest(Guid Version);
+
 public sealed record AddTaskCommentRequest(string Text);
+
+public sealed record TaskAssigneeFilterOption(Guid Id, string Name);
 
 public sealed record LumaTaskCommentDetails(
     Guid Id,
@@ -81,7 +87,7 @@ public sealed record AssignedLumaTask(
     Guid Id,
     string Title,
     string CreatorName,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     TaskAssignmentStatus AssignmentStatus,
     TaskWorkStatus WorkStatus,
     TaskPriority Priority,
@@ -92,7 +98,7 @@ public sealed record CreatedLumaTask(
     Guid Id,
     string Title,
     string AssigneeName,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     TaskAssignmentStatus AssignmentStatus,
     TaskWorkStatus WorkStatus,
     TaskPriority Priority,
@@ -108,7 +114,7 @@ public sealed record RelatedLumaTask(
     Guid? AssigneeId,
     Guid? ProjectId,
     string ProjectName,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     TaskAssignmentStatus AssignmentStatus,
     TaskWorkStatus WorkStatus,
     TaskPriority Priority,
@@ -127,7 +133,7 @@ public sealed record LumaTaskDetails(
     bool IsInvited,
     Guid? ProjectId,
     string ProjectName,
-    DateOnly Deadline,
+    DateOnly? Deadline,
     DateTime CreatedAt,
     TaskAssignmentStatus AssignmentStatus,
     TaskWorkStatus WorkStatus,
@@ -141,7 +147,8 @@ public sealed record LumaTaskDetails(
     bool CanReviewDeadlineChange,
     bool CanEdit,
     bool CanManageWorkStatus,
-    bool CanComment);
+    bool CanComment,
+    bool CanTake);
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -178,7 +185,7 @@ public sealed class TaskStore(
             selectedProject = await db.Projects.SingleOrDefaultAsync(project => project.Id == projectId)
                 ?? throw new ValidationException("Choose an existing LUMA project.");
 
-        TaskUser? doer;
+        TaskUser? doer = null;
         string? invitationEmail = null;
         if (request.AssigneeId is { } assigneeId)
         {
@@ -189,7 +196,7 @@ public sealed class TaskStore(
             if (doer is null)
                 throw new ValidationException("Choose a registered LUMA user or enter a valid email address as the assignee.");
         }
-        else
+        else if (!string.IsNullOrWhiteSpace(request.AssigneeEmail))
         {
             invitationEmail = request.AssigneeEmail!.Trim();
             var normalizedEmail = NormalizeEmail(invitationEmail);
@@ -208,7 +215,7 @@ public sealed class TaskStore(
             AssigneeId = doer?.Id,
             ProjectId = request.ProjectId,
             Project = selectedProject,
-            Deadline = request.Deadline!.Value,
+            Deadline = request.Deadline,
             CreatedAt = DateTime.UtcNow,
             AssignmentStatus = TaskAssignmentStatus.Pending,
             WorkStatus = TaskWorkStatus.ToDo,
@@ -219,7 +226,7 @@ public sealed class TaskStore(
 
         db.Tasks.Add(entity);
         string? invitationToken = null;
-        if (doer is null)
+        if (doer is null && invitationEmail is not null)
         {
             var token = TaskInvitationToken.Create();
             invitationToken = token.Token;
@@ -237,12 +244,30 @@ public sealed class TaskStore(
             };
         }
 
+        QueueInboxItem(
+            db,
+            entity,
+            creatorId,
+            doer?.Id,
+            InboxActivityType.TaskAssigned,
+            $"{maker.Name} assigned “{entity.Title}” to you.");
         await db.SaveChangesAsync();
         if (doer is not null)
             await NotifyCreatedAfterCommitAsync(entity, maker, doer);
-        else
+        else if (invitationEmail is not null)
             await NotifyInvitedAfterCommitAsync(entity, maker, invitationEmail!, invitationToken!);
         return entity.Id;
+    }
+
+    public async Task<IReadOnlyList<TaskAssigneeFilterOption>> LoadAssigneeFilterOptionsAsync()
+    {
+        _ = await GetCurrentUserIdAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        return await db.Users.AsNoTracking()
+            .OrderBy(user => user.Name)
+            .ThenBy(user => user.Email)
+            .Select(user => new TaskAssigneeFilterOption(user.Id, user.Name))
+            .ToListAsync();
     }
 
     public async Task<IReadOnlyList<AssignedLumaTask>> LoadAssignedAsync(TaskListQuery? query = null)
@@ -381,6 +406,7 @@ public sealed class TaskStore(
                 AssigneeName = item.Assignee != null
                     ? item.Assignee.Name
                     : item.Invitation != null ? item.Invitation.RecipientEmail : "Unassigned",
+                HasInvitation = item.Invitation != null,
                 IsInvited = item.AssigneeId == null && item.Invitation != null &&
                     item.Invitation.Status == TaskInvitationStatus.Pending,
                 item.ProjectId,
@@ -423,7 +449,8 @@ public sealed class TaskStore(
             task.CreatorId == currentUserId,
             task.CreatorId == currentUserId,
             task.AssigneeId == currentUserId,
-            task.CreatorId == currentUserId || task.AssigneeId == currentUserId);
+            task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
+            task.AssigneeId is null && !task.HasInvitation);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -449,6 +476,13 @@ public sealed class TaskStore(
         task.AssignmentStatus = TaskAssignmentStatus.Accepted;
         task.AcceptedAt = DateTime.UtcNow;
         task.Version = Guid.NewGuid();
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.CreatorId,
+            InboxActivityType.TaskAccepted,
+            $"{task.Assignee!.Name} accepted “{task.Title}”.");
         var acceptedByThisOperation = false;
 
         try
@@ -471,6 +505,37 @@ public sealed class TaskStore(
         return ToDetails(task, currentUserId);
     }
 
+    public async Task<LumaTaskDetails> TakeAsync(Guid taskId, TakeLumaTaskRequest request)
+    {
+        LastNotice = null;
+        ArgumentNullException.ThrowIfNull(request);
+        var currentUserId = await GetCurrentUserIdAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var task = await LoadTaskForActionAsync(db, taskId);
+
+        if (task.AssigneeId is not null || task.Invitation is not null)
+            throw new ValidationException("This task is already assigned.");
+        EnsureCurrentVersion(task, request.Version);
+
+        var doer = await db.Users.SingleOrDefaultAsync(user => user.Id == currentUserId)
+            ?? throw new UnauthorizedAccessException("The signed-in LUMA user could not be found.");
+        task.AssigneeId = currentUserId;
+        task.Assignee = doer;
+        task.AssignmentStatus = TaskAssignmentStatus.Accepted;
+        task.AcceptedAt = DateTime.UtcNow;
+        task.Version = Guid.NewGuid();
+
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.CreatorId,
+            InboxActivityType.TaskTaken,
+            $"{doer.Name} took “{task.Title}”.");
+        await SaveActionAsync(db, "The task changed before you could take it. Reopen it and try again.");
+        return ToDetails(task, currentUserId);
+    }
+
     public async Task<LumaTaskDetails> RequestDeadlineChangeAsync(Guid taskId, RequestTaskDeadlineChange request)
     {
         LastNotice = null;
@@ -486,7 +551,9 @@ public sealed class TaskStore(
         if (task.AssignmentStatus != TaskAssignmentStatus.Pending)
             throw new ValidationException("A deadline change can be requested only while the assignment is pending.");
 
-        ValidateDeadlineChangeRequest(task.Deadline, request);
+        if (task.Deadline is null)
+            throw new ValidationException("A task without a deadline cannot request a deadline change.");
+        ValidateDeadlineChangeRequest(task.Deadline.Value, request);
         task.RequestedDeadline = request.ProposedDeadline!.Value;
         task.DeadlineChangeComment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
         task.DeadlineChangeRequestedAt = DateTime.UtcNow;
@@ -494,6 +561,13 @@ public sealed class TaskStore(
         task.AcceptedAt = null;
         task.Version = Guid.NewGuid();
 
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.CreatorId,
+            InboxActivityType.DeadlineChangeRequested,
+            $"{task.Assignee!.Name} requested a deadline change for “{task.Title}”.");
         await SaveActionAsync(db, "The task changed before the deadline request could be saved. Reopen it and try again.");
         await NotifyDeadlineChangeRequestedAfterCommitAsync(task);
         return ToDetails(task, currentUserId);
@@ -516,6 +590,13 @@ public sealed class TaskStore(
         ClearDeadlineRequest(task);
         task.Version = Guid.NewGuid();
 
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.AssigneeId,
+            InboxActivityType.DeadlineChangeApproved,
+            $"{task.Creator!.Name} approved the deadline change for “{task.Title}”.");
         await SaveActionAsync(db, "The task changed before the deadline request could be approved. Reopen it and try again.");
         await NotifyDeadlineChangeApprovedAfterCommitAsync(task, request);
         return ToDetails(task, currentUserId);
@@ -537,6 +618,13 @@ public sealed class TaskStore(
         ClearDeadlineRequest(task);
         task.Version = Guid.NewGuid();
 
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.AssigneeId,
+            InboxActivityType.DeadlineChangeDeclined,
+            $"{task.Creator!.Name} declined the deadline change for “{task.Title}”.");
         await SaveActionAsync(db, "The task changed before the deadline request could be declined. Reopen it and try again.");
         await NotifyDeadlineChangeDeclinedAfterCommitAsync(task, request);
         return ToDetails(task, currentUserId);
@@ -592,6 +680,13 @@ public sealed class TaskStore(
         task.Project = updatedProject;
         task.Version = Guid.NewGuid();
 
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.AssigneeId,
+            InboxActivityType.TaskUpdated,
+            $"{task.Creator!.Name} updated “{task.Title}”.");
         await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
         await NotifyTaskUpdatedAfterCommitAsync(task, changes);
         return ToDetails(task, currentUserId);
@@ -619,6 +714,13 @@ public sealed class TaskStore(
         task.WorkStatus = request.WorkStatus;
         task.Version = Guid.NewGuid();
 
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            task.CreatorId,
+            InboxActivityType.WorkStatusChanged,
+            $"{task.Assignee!.Name} moved “{task.Title}” to {WorkStatusName(task.WorkStatus)}.");
         await SaveActionAsync(db, "The task changed before its progress could be updated. Reopen it and try again.");
         await NotifyWorkStatusChangedAfterCommitAsync(task, previousStatus);
         return ToDetails(task, currentUserId);
@@ -670,6 +772,13 @@ public sealed class TaskStore(
         };
 
         db.TaskComments.Add(comment);
+        QueueInboxItem(
+            db,
+            task,
+            currentUserId,
+            currentUserId == task.CreatorId ? task.AssigneeId : task.CreatorId,
+            InboxActivityType.CommentAdded,
+            $"{author.Name} commented on “{task.Title}”.");
         await db.SaveChangesAsync();
         await NotifyCommentAddedAfterCommitAsync(task, author, comment);
         return new LumaTaskCommentDetails(
@@ -773,7 +882,7 @@ public sealed class TaskStore(
                 task.Title,
                 maker.Name,
                 doer.Name,
-                task.Deadline,
+                task.Deadline!.Value,
                 task.RequestedDeadline!.Value,
                 task.DeadlineChangeComment ?? string.Empty,
                 task.DeadlineChangeRequestedAt!.Value,
@@ -955,6 +1064,35 @@ public sealed class TaskStore(
 
     private static TaskUser User(AppUser user) => new(user.Id, user.Name, user.Email);
 
+    private static void QueueInboxItem(
+        CalendarDbContext db,
+        LumaTask task,
+        Guid actorUserId,
+        Guid? recipientUserId,
+        InboxActivityType activityType,
+        string message)
+    {
+        if (recipientUserId is null || recipientUserId == actorUserId) return;
+
+        db.InboxItems.Add(new InboxItem
+        {
+            Id = Guid.NewGuid(),
+            RecipientUserId = recipientUserId.Value,
+            ActorUserId = actorUserId,
+            TaskId = task.Id,
+            ActivityType = activityType,
+            Message = message,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+
+    private static string WorkStatusName(TaskWorkStatus status) => status switch
+    {
+        TaskWorkStatus.InProgress => "In Progress",
+        TaskWorkStatus.Done => "Done",
+        _ => "To Do"
+    };
+
     private static async Task<LumaTask> LoadTaskForActionAsync(CalendarDbContext db, Guid taskId) =>
         await db.Tasks
             .Include(item => item.Creator)
@@ -979,13 +1117,13 @@ public sealed class TaskStore(
     private static DeadlineRequestSnapshot ActiveDeadlineRequest(LumaTask task)
     {
         if (task.AssignmentStatus != TaskAssignmentStatus.DeadlineChangeRequested ||
-            task.RequestedDeadline is null || task.DeadlineChangeRequestedAt is null)
+            task.Deadline is null || task.RequestedDeadline is null || task.DeadlineChangeRequestedAt is null)
         {
             throw new ValidationException("There is no active deadline-change request to review.");
         }
 
         return new DeadlineRequestSnapshot(
-            task.Deadline,
+            task.Deadline.Value,
             task.RequestedDeadline.Value,
             task.DeadlineChangeComment ?? string.Empty,
             task.DeadlineChangeRequestedAt.Value);
@@ -1021,7 +1159,8 @@ public sealed class TaskStore(
         task.CreatorId == currentUserId,
         task.CreatorId == currentUserId,
         task.AssigneeId == currentUserId,
-        task.CreatorId == currentUserId || task.AssigneeId == currentUserId);
+        task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
+        task.AssigneeId is null && task.Invitation is null);
 
     private async Task<Guid> GetCurrentUserIdAsync()
     {
@@ -1046,14 +1185,11 @@ public sealed class TaskStore(
         if ((request.Description?.Length ?? 0) > 4000)
             errors.Add("Task description cannot exceed 4000 characters.");
         if (request.AssigneeId == Guid.Empty)
-            errors.Add("Task assignee is required.");
-        else if (request.AssigneeId is null && string.IsNullOrWhiteSpace(request.AssigneeEmail))
-            errors.Add("Task assignee is required.");
-        else if (request.AssigneeId is null && !IsValidEmail(request.AssigneeEmail!))
+            errors.Add("Choose a valid task assignee.");
+        else if (request.AssigneeId is null && !string.IsNullOrWhiteSpace(request.AssigneeEmail) &&
+                 !IsValidEmail(request.AssigneeEmail!))
             errors.Add("Enter a valid assignee email address.");
-        if (request.Deadline is null)
-            errors.Add("Task deadline is required.");
-        else if (request.Deadline.Value < DateOnly.FromDateTime(DateTime.Today))
+        if (request.Deadline is not null && request.Deadline.Value < DateOnly.FromDateTime(DateTime.Today))
             errors.Add("Task deadline cannot be before today.");
         if (!Enum.IsDefined(request.Priority))
             errors.Add("Choose a valid task priority.");
@@ -1128,10 +1264,13 @@ public sealed class TaskStore(
             tasks = tasks.Where(task => task.ProjectId == query.ProjectId.Value);
         if (query.AssigneeId is not null)
             tasks = tasks.Where(task => task.AssigneeId == query.AssigneeId.Value);
+        else if (query.UnassignedOnly)
+            tasks = tasks.Where(task => task.AssigneeId == null && task.Invitation == null);
 
         var today = DateOnly.FromDateTime(DateTime.Today);
         tasks = query.Deadline switch
         {
+            TaskDeadlineFilter.NoDeadline => tasks.Where(task => task.Deadline == null),
             TaskDeadlineFilter.Overdue => tasks.Where(task => task.Deadline < today),
             TaskDeadlineFilter.Today => tasks.Where(task => task.Deadline == today),
             TaskDeadlineFilter.ThisWeek => tasks.Where(task =>
@@ -1146,13 +1285,15 @@ public sealed class TaskStore(
         {
             TaskSortOrder.PriorityHighest => tasks
                 .OrderByDescending(task => task.Priority)
+                .ThenBy(task => task.Deadline == null)
                 .ThenBy(task => task.Deadline)
                 .ThenByDescending(task => task.CreatedAt),
             TaskSortOrder.Newest => tasks
                 .OrderByDescending(task => task.CreatedAt)
                 .ThenBy(task => task.Deadline),
             _ => tasks
-                .OrderBy(task => task.Deadline)
+                .OrderBy(task => task.Deadline == null)
+                .ThenBy(task => task.Deadline)
                 .ThenByDescending(task => task.Priority)
                 .ThenBy(task => task.CreatedAt)
         };

@@ -1,0 +1,203 @@
+@page "/inbox"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject InboxStore InboxStore
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+@using global::Calendar.Models
+@using global::Calendar.Services
+
+<PageTitle>Inbox · Luma</PageTitle>
+
+<div class="calendar-app inbox-app">
+    <aside class="sidebar-panel inbox-sidebar">
+        <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
+        <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
+        <div class="sidebar-footer">
+            <span class="avatar">@Initials</span>
+            <div><strong>@CurrentUserName</strong><small>Synced with MSSQL</small></div>
+            <form method="post" action="/account/logout">
+                <AntiforgeryToken />
+                <button title="Sign out" aria-label="Sign out">↗</button>
+            </form>
+        </div>
+    </aside>
+
+    <main class="inbox-main">
+        <header class="inbox-header">
+            <div class="inbox-mobile-navigation">
+                <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
+                <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
+            </div>
+            <div class="inbox-heading-row">
+                <div>
+                    <span class="eyebrow">TASK ACTIVITY</span>
+                    <h1>Inbox</h1>
+                </div>
+                <button type="button" class="inbox-mark-all" disabled="@(UnreadCount == 0 || IsLoading)"
+                        @onclick="MarkAllReadAsync">
+                    Mark all as read
+                </button>
+            </div>
+        </header>
+
+        <section class="inbox-surface" aria-live="polite">
+            <div class="inbox-workspace">
+                <div class="inbox-summary">
+                    <strong>Recent activity</strong>
+                    <span>@(UnreadCount == 0 ? "You're all caught up" : $"{UnreadCount} unread")</span>
+                </div>
+
+                @if (IsLoading)
+                {
+                    <div class="inbox-state"><span class="inbox-loader"></span><p>Loading activity…</p></div>
+                }
+                else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+                {
+                    <div class="inbox-state error"><strong>Inbox unavailable</strong><p>@ErrorMessage</p></div>
+                }
+                else if (Items.Count == 0)
+                {
+                    <div class="inbox-state">
+                        <span class="inbox-empty-icon" aria-hidden="true">✓</span>
+                        <strong>No activity yet</strong>
+                        <p>Task assignments and updates from your teammates will appear here.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="inbox-list">
+                        @foreach (var item in Items)
+                        {
+                            <article class="inbox-item @(item.IsRead ? null : "unread")">
+                                <button type="button" class="inbox-item-main" disabled="@(item.TaskId is null)"
+                                        @onclick="() => OpenTaskAsync(item)">
+                                    <span class="inbox-activity-icon" aria-hidden="true">@ActivityIcon(item.ActivityType)</span>
+                                    <span class="inbox-item-copy">
+                                        <span>@item.Message</span>
+                                        <small>@FormatTime(item.CreatedAt)</small>
+                                    </span>
+                                    @if (!item.IsRead)
+                                    {
+                                        <span class="inbox-unread-dot" aria-label="Unread"></span>
+                                    }
+                                </button>
+                                <div class="inbox-item-actions">
+                                    @if (item.TaskId is not null)
+                                    {
+                                        <button type="button" class="inbox-view-task" @onclick="() => OpenTaskAsync(item)">
+                                            View task <span aria-hidden="true">→</span>
+                                        </button>
+                                    }
+                                    @if (!item.IsRead)
+                                    {
+                                        <button type="button" class="inbox-read-action" @onclick="() => MarkReadAsync(item.Id)">
+                                            Mark read
+                                        </button>
+                                    }
+                                </div>
+                            </article>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    </main>
+</div>
+
+@code {
+    private string CurrentUserName = "User";
+    private bool IsLoading = true;
+    private string ErrorMessage = string.Empty;
+    private int UnreadCount;
+    private long InboxNavRefreshKey;
+    private IReadOnlyList<InboxItemSummary> Items = [];
+
+    private string Initials
+    {
+        get
+        {
+            var initials = string.Concat(CurrentUserName
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Take(2)
+                .Select(part => char.ToUpperInvariant(part[0])));
+            return string.IsNullOrEmpty(initials) ? "U" : initials;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        CurrentUserName = principal.Identity?.Name ?? "User";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = string.Empty;
+        try
+        {
+            var snapshot = await InboxStore.LoadRecentAsync(75);
+            Items = snapshot.Items;
+            UnreadCount = snapshot.UnreadCount;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            ErrorMessage = exception.Message;
+        }
+        catch (Exception)
+        {
+            ErrorMessage = "Task activity could not be loaded. Please try again.";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task MarkReadAsync(Guid itemId)
+    {
+        if (await InboxStore.MarkReadAsync(itemId))
+        {
+            InboxNavRefreshKey++;
+            await LoadAsync();
+        }
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        await InboxStore.MarkAllReadAsync();
+        InboxNavRefreshKey++;
+        await LoadAsync();
+    }
+
+    private async Task OpenTaskAsync(InboxItemSummary item)
+    {
+        if (item.TaskId is not { } taskId) return;
+        if (!item.IsRead)
+            await InboxStore.MarkReadAsync(item.Id);
+        Navigation.NavigateTo($"/tasks?task={taskId:D}");
+    }
+
+    private static string ActivityIcon(InboxActivityType activityType) => activityType switch
+    {
+        InboxActivityType.CommentAdded => "✦",
+        InboxActivityType.WorkStatusChanged => "↗",
+        InboxActivityType.TaskAccepted or InboxActivityType.TaskTaken => "✓",
+        InboxActivityType.DeadlineChangeRequested => "◷",
+        InboxActivityType.DeadlineChangeApproved => "✓",
+        InboxActivityType.DeadlineChangeDeclined => "×",
+        InboxActivityType.TaskUpdated => "✎",
+        _ => "+"
+    };
+
+    private static string FormatTime(DateTime createdAt)
+    {
+        var local = createdAt.ToLocalTime();
+        var today = DateTime.Today;
+        if (local.Date == today) return $"Today · {local:h:mm tt}";
+        if (local.Date == today.AddDays(-1)) return $"Yesterday · {local:h:mm tt}";
+        return local.ToString("MMM d, yyyy · h:mm tt");
+    }
+}

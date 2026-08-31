@@ -722,6 +722,62 @@
     font-size: 18px;
 }
 
+.tasks-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tasks-inbox-button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid #e1dce8;
+    border-radius: 12px;
+    background: #fff;
+    color: #655d6d;
+    box-shadow: 0 4px 14px rgba(49, 36, 66, .05);
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s, transform .15s;
+}
+
+.tasks-inbox-button:hover {
+    border-color: #cfc4ec;
+    background: #faf8ff;
+    color: #6844dc;
+    transform: translateY(-1px);
+}
+
+.tasks-inbox-button svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.tasks-inbox-count {
+    position: absolute;
+    top: -5px;
+    right: -6px;
+    display: grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    border: 2px solid #fff;
+    border-radius: 10px;
+    background: #7049e8;
+    padding: 0 4px;
+    color: #fff;
+    font-size: 7px;
+    font-weight: 850;
+    line-height: 1;
+}
+
 .task-card-mark.company {
     background: linear-gradient(145deg, #f4f2f8, #ece9f2);
     color: #766f80;
@@ -940,6 +996,221 @@
     font-size: 9px;
 }
 
+.tasks-inbox-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    justify-content: flex-end;
+    background: rgba(25, 20, 33, .24);
+    backdrop-filter: blur(2px);
+}
+
+.tasks-inbox-panel {
+    display: flex;
+    flex-direction: column;
+    width: min(410px, 94vw);
+    height: 100%;
+    border-left: 1px solid #e6e0eb;
+    background: #fff;
+    box-shadow: -18px 0 48px rgba(37, 27, 50, .15);
+    animation: inbox-panel-in .2s ease-out;
+}
+
+.tasks-inbox-panel > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 25px 24px 17px;
+    border-bottom: 1px solid #eeeaf1;
+}
+
+.tasks-inbox-panel h2 {
+    margin: 5px 0 0;
+    color: #312b38;
+    font-size: 21px;
+    letter-spacing: -.35px;
+}
+
+.tasks-inbox-close {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 11px;
+    background: #f6f3f8;
+    color: #817887;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.tasks-inbox-close:hover { background: #eee9f4; color: #5e5368; }
+
+.tasks-inbox-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 24px;
+    border-bottom: 1px solid #f0edf2;
+    background: #fcfbfd;
+}
+
+.tasks-inbox-toolbar span {
+    color: #8d8493;
+    font-size: 8.5px;
+    font-weight: 700;
+}
+
+.tasks-inbox-toolbar button {
+    border: 0;
+    background: transparent;
+    padding: 4px;
+    color: #6844dc;
+    font-size: 8.5px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.tasks-inbox-toolbar button:disabled { color: #b8b0be; cursor: default; }
+
+.tasks-inbox-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px 12px 22px;
+}
+
+.tasks-inbox-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #f0edf2;
+    border-radius: 12px;
+}
+
+.tasks-inbox-item.unread { background: #f8f5ff; }
+.tasks-inbox-item:hover { background: #faf8fc; }
+.tasks-inbox-item.unread:hover { background: #f3eeff; }
+
+.tasks-inbox-open {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 8px;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 14px 42px 14px 12px;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tasks-inbox-activity-icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+    background: #eee9fa;
+    color: #6844dc;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.tasks-inbox-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.tasks-inbox-copy > span {
+    overflow: hidden;
+    color: #514958;
+    font-size: 9.5px;
+    font-weight: 600;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+}
+
+.tasks-inbox-item.unread .tasks-inbox-copy > span { color: #352b42; font-weight: 750; }
+
+.tasks-inbox-copy small {
+    color: #9a919f;
+    font-size: 7.5px;
+    font-weight: 650;
+}
+
+.tasks-inbox-view-task {
+    color: #6844dc;
+    font-size: 7.8px;
+    font-weight: 800;
+}
+
+.tasks-inbox-view-task > span { margin-left: 2px; }
+
+.tasks-inbox-unread-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #7049e8;
+    box-shadow: 0 0 0 3px rgba(112, 73, 232, .11);
+}
+
+.tasks-inbox-read {
+    position: absolute;
+    right: 11px;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #8a7fa0;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.tasks-inbox-read:hover { background: #e9e2fa; color: #6844dc; }
+
+.tasks-inbox-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 270px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 28px;
+    color: #6e6675;
+    text-align: center;
+}
+
+.tasks-inbox-state strong { font-size: 11px; }
+.tasks-inbox-state p { max-width: 235px; margin: 0; color: #9a929f; font-size: 8.5px; line-height: 1.5; }
+.tasks-inbox-state.error strong { color: #98485a; }
+
+.tasks-inbox-empty-icon {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    margin-bottom: 3px;
+    border-radius: 14px;
+    background: #f0ebfd;
+    color: #7049e8;
+    font-size: 16px;
+}
+
+@keyframes inbox-panel-in {
+    from { opacity: .4; transform: translateX(20px); }
+    to { opacity: 1; transform: none; }
+}
+
 @keyframes task-panel-in {
     from { opacity: 0; transform: translateY(3px); }
     to { opacity: 1; transform: none; }
@@ -952,7 +1223,8 @@
 @media (prefers-reduced-motion: reduce) {
     .task-panel,
     .task-board,
-    .tasks-loading span {
+    .tasks-loading span,
+    .tasks-inbox-panel {
         animation: none;
     }
 
@@ -1023,6 +1295,12 @@
 }
 
 @media (max-width: 520px) {
+    .tasks-heading-row { align-items: flex-end; }
+
+    .tasks-header-actions { gap: 7px; }
+
+    .tasks-inbox-button { width: 38px; height: 38px; }
+
     .tasks-create-button {
         padding: 9px 12px;
     }

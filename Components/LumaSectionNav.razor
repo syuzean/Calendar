@@ -1,5 +1,36 @@
+@inject InboxStore InboxStore
+@using global::Calendar.Services
+
 <nav class="luma-section-nav" aria-label="Luma sections">
     <NavLink href="/" Match="NavLinkMatch.All">Calendar</NavLink>
-    <span aria-hidden="true">|</span>
+    <span class="luma-section-separator" aria-hidden="true">|</span>
     <NavLink href="/tasks">Tasks</NavLink>
+    <span class="luma-section-separator" aria-hidden="true">|</span>
+    <NavLink href="/inbox" class="luma-inbox-link">
+        Inbox
+        @if (UnreadCount > 0)
+        {
+            <span class="luma-inbox-badge">@(UnreadCount > 99 ? "99+" : UnreadCount)</span>
+        }
+    </NavLink>
 </nav>
+
+@code {
+    [Parameter] public long RefreshKey { get; set; }
+    private int UnreadCount;
+    private long? LoadedRefreshKey;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LoadedRefreshKey == RefreshKey) return;
+        LoadedRefreshKey = RefreshKey;
+        try
+        {
+            UnreadCount = await InboxStore.GetUnreadCountAsync();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            UnreadCount = 0;
+        }
+    }
+}
