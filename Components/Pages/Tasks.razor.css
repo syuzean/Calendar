@@ -215,6 +215,7 @@
 .task-list-tools {
     display: flex;
     align-items: end;
+    flex-wrap: wrap;
     gap: 7px;
     margin-bottom: 16px;
     border: 1px solid #e7e2eb;
@@ -228,7 +229,8 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-width: 104px;
+    flex: 1 1 96px;
+    min-width: 92px;
 }
 
 .task-list-tools > label > span {
@@ -250,6 +252,7 @@
 }
 
 .task-list-tools select {
+    width: 100%;
     padding: 0 8px;
 }
 
@@ -295,6 +298,7 @@
     font-weight: 750;
     white-space: nowrap;
     cursor: pointer;
+    margin-left: auto;
 }
 
 .project-list-tools {
@@ -876,6 +880,15 @@
 
 .task-card-deadline.due-today time {
     color: #6844dc;
+}
+
+.task-status-badge.unassigned {
+    background: #f0edf4;
+    color: #716879;
+}
+
+.task-card-deadline.no-deadline {
+    color: #918997;
 }
 
 .task-card-arrow {

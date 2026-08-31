@@ -8,7 +8,7 @@ public sealed class LumaTask
     public Guid CreatorId { get; set; }
     public Guid? AssigneeId { get; set; }
     public Guid? ProjectId { get; set; }
-    public DateOnly Deadline { get; set; }
+    public DateOnly? Deadline { get; set; }
     public DateTime CreatedAt { get; set; }
     public TaskAssignmentStatus AssignmentStatus { get; set; } = TaskAssignmentStatus.Pending;
     public TaskWorkStatus WorkStatus { get; set; } = TaskWorkStatus.ToDo;

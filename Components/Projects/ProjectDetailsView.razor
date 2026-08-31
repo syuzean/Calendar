@@ -40,11 +40,11 @@
 
         <div class="project-task-tools" aria-label="Filter project tasks">
             <label class="project-task-search"><span aria-hidden="true">⌕</span><input type="search" placeholder="Search tasks…" aria-label="Search project tasks by title" @bind="Search" @bind:event="oninput" @bind:after="ApplyFiltersAsync" /></label>
-            <label><span>Assignee</span><select @bind="Assignee" @bind:after="ApplyFiltersAsync"><option value="">All</option>@foreach (var option in Assignees) { <option value="@option.Id">@option.Name</option> }</select></label>
+            <label><span>Assignee</span><select @bind="Assignee" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="Unassigned">Unassigned</option>@foreach (var option in Assignees) { <option value="@option.Id">@option.Name</option> }</select></label>
             <label><span>Work</span><select @bind="Work" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="ToDo">To Do</option><option value="InProgress">In Progress</option><option value="Done">Done</option></select></label>
             <label><span>Assignment</span><select @bind="Assignment" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="Pending">Pending</option><option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option></select></label>
             <label><span>Priority</span><select @bind="Priority" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="None">No priority</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label>
-            <label><span>Deadline</span><select @bind="Deadline" @bind:after="ApplyFiltersAsync"><option value="All">All</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="ThisWeek">This week</option></select></label>
+            <label><span>Deadline</span><select @bind="Deadline" @bind:after="ApplyFiltersAsync"><option value="All">All</option><option value="NoDeadline">No deadline</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="ThisWeek">This week</option></select></label>
             <label><span>Sort</span><select @bind="Sort" @bind:after="ApplyFiltersAsync"><option value="DeadlineNearest">Deadline: nearest</option><option value="PriorityHighest">Priority: highest</option><option value="Newest">Newest</option></select></label>
             @if (HasFilters) { <button type="button" @onclick="ClearFiltersAsync">Clear</button> }
         </div>
@@ -85,12 +85,21 @@
                                             title="@(canDrag ? "Drag to the next work stage" : "Open task details")"
                                             @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
                                         <strong>@task.Title</strong>
-                                        <span class="project-board-person">Assigned to @task.AssigneeName</span>
+                                        <span class="project-board-person">@(IsUnassigned(task) ? "Unassigned" : $"Assigned to {task.AssigneeName}")</span>
                                         <span class="project-task-badges">
                                             <i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i>
-                                            <i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited)">@AssignmentLabel(task.AssignmentStatus, task.IsInvited)</i>
+                                            <i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@AssignmentLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</i>
                                         </span>
-                                        <span class="project-board-deadline @deadlineClass"><time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time></span>
+                                        <span class="project-board-deadline @deadlineClass">
+                                            @if (task.Deadline is { } boardDeadline)
+                                            {
+                                                <time datetime="@boardDeadline.ToString("yyyy-MM-dd")">@FormatDeadline(boardDeadline)</time>
+                                            }
+                                            else
+                                            {
+                                                <span>No deadline</span>
+                                            }
+                                        </span>
                                     </button>
                                 }
                             }
@@ -121,9 +130,17 @@
                 @foreach (var task in Tasks)
                 {
                     <button type="button" class="project-task-card" @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
-                        <span class="project-task-main"><strong>@task.Title</strong><small>Assigned to @task.AssigneeName</small></span>
-                        <span class="project-task-badges"><i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i><i class="work @WorkClass(task.WorkStatus)">@WorkLabel(task.WorkStatus)</i><i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited)">@AssignmentLabel(task.AssignmentStatus, task.IsInvited)</i></span>
-                        <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@task.Deadline.ToString("MMM d, yyyy")</time><span class="project-task-arrow" aria-hidden="true">›</span>
+                        <span class="project-task-main"><strong>@task.Title</strong><small>@(IsUnassigned(task) ? "Unassigned" : $"Assigned to {task.AssigneeName}")</small></span>
+                        <span class="project-task-badges"><i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i><i class="work @WorkClass(task.WorkStatus)">@WorkLabel(task.WorkStatus)</i><i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@AssignmentLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</i></span>
+                        @if (task.Deadline is { } deadline)
+                        {
+                            <time datetime="@deadline.ToString("yyyy-MM-dd")">@deadline.ToString("MMM d, yyyy")</time>
+                        }
+                        else
+                        {
+                            <span class="project-task-no-deadline">No deadline</span>
+                        }
+                        <span class="project-task-arrow" aria-hidden="true">›</span>
                     </button>
                 }
             </div>
@@ -252,10 +269,16 @@
             }
             var assigneeId = Guid.TryParse(Assignee, out var parsedAssignee) ? parsedAssignee : (Guid?)null;
             Tasks = await TaskStore.LoadProjectTasksAsync(Details.Id, new TaskListQuery(
-                Search, Parse<TaskWorkStatus>(Work), Parse<TaskAssignmentStatus>(Assignment), Parse<TaskPriority>(Priority),
-                Enum.TryParse<TaskDeadlineFilter>(Deadline, out var deadline) ? deadline : TaskDeadlineFilter.All,
-                Enum.TryParse<TaskSortOrder>(Sort, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
-                TaskRelationFilter.AllRelated, Details.Id, assigneeId));
+                Search: Search,
+                WorkStatus: Parse<TaskWorkStatus>(Work),
+                AssignmentStatus: Parse<TaskAssignmentStatus>(Assignment),
+                Priority: Parse<TaskPriority>(Priority),
+                Deadline: Enum.TryParse<TaskDeadlineFilter>(Deadline, out var deadline) ? deadline : TaskDeadlineFilter.All,
+                Sort: Enum.TryParse<TaskSortOrder>(Sort, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
+                Relation: TaskRelationFilter.AllTasks,
+                ProjectId: Details.Id,
+                AssigneeId: assigneeId,
+                UnassignedOnly: Assignee == "Unassigned"));
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException) { TasksError = exception.Message; }
         finally { TasksLoading = false; }
@@ -267,24 +290,27 @@
     private static string PriorityLabel(TaskPriority value) => value == TaskPriority.None ? "No priority" : value.ToString();
     private static string WorkClass(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "in-progress" : value.ToString().ToLowerInvariant();
     private static string WorkLabel(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "In Progress" : value == TaskWorkStatus.ToDo ? "To Do" : "Done";
-    private static string AssignmentClass(TaskAssignmentStatus value, bool invited) => invited ? "invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "requested" : value.ToString().ToLowerInvariant();
-    private static string AssignmentLabel(TaskAssignmentStatus value, bool invited) => invited ? "Invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "Deadline requested" : value.ToString();
+    private static string AssignmentClass(TaskAssignmentStatus value, bool invited, bool unassigned) => unassigned ? "unassigned" : invited ? "invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "requested" : value.ToString().ToLowerInvariant();
+    private static string AssignmentLabel(TaskAssignmentStatus value, bool invited, bool unassigned) => unassigned ? "Unassigned" : invited ? "Invited" : value == TaskAssignmentStatus.DeadlineChangeRequested ? "Deadline requested" : value.ToString();
+    private static bool IsUnassigned(RelatedLumaTask task) => task.AssigneeId is null && !task.IsInvited;
     private static bool CanDrag(RelatedLumaTask task) =>
         task.CanManageWorkStatus && task.AssignmentStatus == TaskAssignmentStatus.Accepted && task.WorkStatus != TaskWorkStatus.Done;
     private static bool IsForwardTransition(TaskWorkStatus current, TaskWorkStatus target) =>
         (current, target) is (TaskWorkStatus.ToDo, TaskWorkStatus.InProgress) or (TaskWorkStatus.InProgress, TaskWorkStatus.Done);
-    private static string FormatDeadline(DateOnly deadline)
+    private static string FormatDeadline(DateOnly? deadline)
     {
+        if (deadline is null) return "No deadline";
         var today = DateOnly.FromDateTime(DateTime.Today);
-        if (deadline == today) return "Today";
-        if (deadline < today) return $"Overdue · {deadline:MMM d, yyyy}";
-        return deadline.ToString("MMM d, yyyy");
+        if (deadline.Value == today) return "Today";
+        if (deadline.Value < today) return $"Overdue · {deadline.Value:MMM d, yyyy}";
+        return deadline.Value.ToString("MMM d, yyyy");
     }
-    private static string DeadlineClass(DateOnly deadline)
+    private static string DeadlineClass(DateOnly? deadline)
     {
+        if (deadline is null) return "no-deadline";
         var today = DateOnly.FromDateTime(DateTime.Today);
-        if (deadline < today) return "overdue";
-        return deadline == today ? "due-today" : string.Empty;
+        if (deadline.Value < today) return "overdue";
+        return deadline.Value == today ? "due-today" : string.Empty;
     }
     private sealed record AssigneeFilterOption(Guid Id, string Name);
     private enum ProjectTaskPresentation { List, Board }

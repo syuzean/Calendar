@@ -167,6 +167,11 @@
     color: #796f83;
 }
 
+.task-detail-status.unassigned {
+    background: #f0edf4;
+    color: #716879;
+}
+
 .task-detail-status.invited {
     background: #eee9ff;
     color: #6844dc;

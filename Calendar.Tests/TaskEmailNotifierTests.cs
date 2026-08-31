@@ -250,6 +250,19 @@ public sealed class TaskEmailNotifierTests
     }
 
     [Fact]
+    public async Task TaskCreated_RendersNoDeadlineSafely()
+    {
+        var sender = new RecordingEmailSender();
+        var notifier = new TaskEmailNotifier(sender, Renderer());
+
+        await notifier.NotifyCreatedAsync(CreatedNotification(BothRecipients()) with { Deadline = null });
+
+        var message = Assert.Single(sender.Messages);
+        Assert.Contains("Deadline: No deadline", message.PlainTextBody);
+        Assert.Contains("No deadline", message.HtmlBody);
+    }
+
+    [Fact]
     public async Task NoProject_IsOmittedAcrossExistingTaskTemplates()
     {
         var sender = new RecordingEmailSender();

@@ -47,7 +47,7 @@
                     </div>
                     <div>
                         <dt>Deadline</dt>
-                        <dd>@Details.Deadline.ToString("dddd, MMMM d, yyyy")</dd>
+                        <dd>@(Details.Deadline?.ToString("dddd, MMMM d, yyyy") ?? "No deadline")</dd>
                     </div>
                     <div>
                         <dt>Created</dt>
@@ -55,7 +55,7 @@
                     </div>
                     <div>
                         <dt>Assignment status</dt>
-                        <dd><span class="task-detail-status @StatusClass(Details.AssignmentStatus, Details.IsInvited)">@StatusLabel(Details.AssignmentStatus, Details.IsInvited)</span></dd>
+                        <dd><span class="task-detail-status @StatusClass(Details.AssignmentStatus, Details.IsInvited, Details.CanTake)">@StatusLabel(Details.AssignmentStatus, Details.IsInvited, Details.CanTake)</span></dd>
                     </div>
                     <div>
                         <dt>Work progress</dt>
@@ -82,7 +82,7 @@
                             </div>
                         </div>
                         <dl>
-                            <div><dt>Current deadline</dt><dd>@Details.Deadline.ToString("MMM d, yyyy")</dd></div>
+                            <div><dt>Current deadline</dt><dd>@Details.Deadline?.ToString("MMM d, yyyy")</dd></div>
                             <div><dt>Requested deadline</dt><dd>@Details.RequestedDeadline.Value.ToString("MMM d, yyyy")</dd></div>
                         </dl>
                         @if (!string.IsNullOrWhiteSpace(Details.DeadlineChangeComment))
@@ -133,15 +133,24 @@
             <button class="secondary-button" type="button" @onclick="Close">Close</button>
             @if (Details?.CanEdit == true)
             {
-                <button class="secondary-button" type="button" disabled="@(IsAccepting || IsReviewingDeadline || IsChangingWorkStatus)" @onclick="Edit">
+                <button class="secondary-button" type="button" disabled="@(IsAccepting || IsTaking || IsReviewingDeadline || IsChangingWorkStatus)" @onclick="Edit">
                     Edit task
+                </button>
+            }
+            @if (Details?.CanTake == true)
+            {
+                <button class="primary-button" type="button" disabled="@IsTaking" @onclick="Take">
+                    @(IsTaking ? "Taking…" : "Take task")
                 </button>
             }
             @if (Details is { AssignmentStatus: TaskAssignmentStatus.Pending, CanAccept: true })
             {
-                <button class="secondary-button" type="button" disabled="@IsAccepting" @onclick="RequestDeadlineChange">
-                    Request deadline change
-                </button>
+                @if (Details.Deadline is not null)
+                {
+                    <button class="secondary-button" type="button" disabled="@IsAccepting" @onclick="RequestDeadlineChange">
+                        Request deadline change
+                    </button>
+                }
                 <button class="primary-button" type="button" disabled="@IsAccepting" @onclick="Accept">
                     @(IsAccepting ? "Accepting…" : "Accept task")
                 </button>
@@ -178,9 +187,11 @@
     [Parameter] public string? ActionError { get; set; }
     [Parameter] public string? NoticeMessage { get; set; }
     [Parameter] public bool IsAccepting { get; set; }
+    [Parameter] public bool IsTaking { get; set; }
     [Parameter] public bool IsReviewingDeadline { get; set; }
     [Parameter] public bool IsChangingWorkStatus { get; set; }
     [Parameter] public EventCallback<Guid> AcceptRequested { get; set; }
+    [Parameter] public EventCallback<Guid> TakeRequested { get; set; }
     [Parameter] public EventCallback<Guid> DeadlineChangeRequested { get; set; }
     [Parameter] public EventCallback<Guid> ApproveDeadlineChangeRequested { get; set; }
     [Parameter] public EventCallback<Guid> DeclineDeadlineChangeRequested { get; set; }
@@ -190,6 +201,7 @@
 
     private Task Close() => CloseRequested.InvokeAsync();
     private Task Accept() => Details is null ? Task.CompletedTask : AcceptRequested.InvokeAsync(Details.Id);
+    private Task Take() => Details is null ? Task.CompletedTask : TakeRequested.InvokeAsync(Details.Id);
     private Task RequestDeadlineChange() => Details is null ? Task.CompletedTask : DeadlineChangeRequested.InvokeAsync(Details.Id);
     private Task ApproveDeadlineChange() => Details is null ? Task.CompletedTask : ApproveDeadlineChangeRequested.InvokeAsync(Details.Id);
     private Task DeclineDeadlineChange() => Details is null ? Task.CompletedTask : DeclineDeadlineChangeRequested.InvokeAsync(Details.Id);
@@ -201,16 +213,16 @@
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
         ? "?"
         : char.ToUpperInvariant(name.Trim()[0]).ToString();
-    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false) =>
-        isInvited ? "invited" :
+    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false, bool isUnassigned = false) =>
+        isUnassigned ? "unassigned" : isInvited ? "invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "accepted",
             TaskAssignmentStatus.DeadlineChangeRequested => "deadline-requested",
             _ => "pending"
         };
-    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false) =>
-        isInvited ? "Invited" :
+    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false, bool isUnassigned = false) =>
+        isUnassigned ? "Unassigned" : isInvited ? "Invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "Accepted",

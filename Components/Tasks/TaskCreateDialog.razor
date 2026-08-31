@@ -39,7 +39,7 @@
 
             <div class="task-field-grid">
                 <div class="field task-assignee-field" @onclick:stopPropagation="true">
-                    <span>Assignee</span>
+                    <span>Assignee <em>optional</em></span>
                     <button class="task-assignee-trigger" type="button" aria-haspopup="listbox"
                             aria-expanded="@ShowAssigneePicker" aria-controls="task-assignee-options"
                             @onclick="ToggleAssigneePicker">
@@ -59,6 +59,17 @@
                                        aria-label="Search people or enter an email address"
                                        @bind="AssigneeSearch" @bind:event="oninput" @bind:after="HandleAssigneeSearchChanged" />
                             </label>
+                            <button type="button" role="option"
+                                    aria-selected="@(SelectedAssigneeId is null && SelectedInvitationEmail.Length == 0)"
+                                    class="@(SelectedAssigneeId is null && SelectedInvitationEmail.Length == 0 ? "selected" : null)"
+                                    @onclick="SelectUnassigned">
+                                <span class="task-assignee-avatar unassigned" aria-hidden="true">—</span>
+                                <span><strong>Unassigned</strong><small>Anyone can take this task later</small></span>
+                                @if (SelectedAssigneeId is null && SelectedInvitationEmail.Length == 0)
+                                {
+                                    <i aria-hidden="true">✓</i>
+                                }
+                            </button>
                             @foreach (var assignee in FilteredAssignees)
                             {
                                 <button type="button" role="option" aria-selected="@(assignee.Id == SelectedAssigneeId)"
@@ -92,13 +103,9 @@
                             }
                         </div>
                     }
-                    @if (!string.IsNullOrEmpty(AssigneeError))
-                    {
-                        <small class="field-error">@AssigneeError</small>
-                    }
                 </div>
 
-                <LumaDateOnlyPicker @ref="DeadlinePicker" Label="Deadline" PickerHeading="Choose deadline"
+                <LumaDateOnlyPicker @ref="DeadlinePicker" Label="Deadline (optional)" PickerHeading="Choose deadline"
                                     PickerAriaLabel="Choose task deadline" AdditionalClass="task-deadline-field"
                                     OpenUpward="true" Value="@Deadline" ValueChanged="SetDeadline"
                                     ErrorMessage="@DeadlineError" />
@@ -125,7 +132,6 @@
     private string Title = string.Empty;
     private string Description = string.Empty;
     private string TitleError = string.Empty;
-    private string AssigneeError = string.Empty;
     private string DeadlineError = string.Empty;
     private Guid? SelectedAssigneeId;
     private string SelectedInvitationEmail = string.Empty;
@@ -161,19 +167,18 @@
         Assignees.AddRange(users
             .Where(user => currentUser is null || user.Id != currentUser.Id)
             .OrderBy(user => user.Name));
-        SelectedAssigneeId = Assignees[0].Id;
     }
 
     private AssigneeOption? SelectedAssignee => Assignees.FirstOrDefault(user => user.Id == SelectedAssigneeId);
     private string SelectedAssigneeLabel => SelectedInvitationEmail.Length > 0
         ? SelectedInvitationEmail
-        : SelectedAssignee is null ? "Choose a person" : SelectedAssignee.IsCurrentUser ? "Me" : SelectedAssignee.Name;
+        : SelectedAssignee is null ? "Unassigned" : SelectedAssignee.IsCurrentUser ? "Me" : SelectedAssignee.Name;
     private string SelectedAssigneeDetail => SelectedInvitationEmail.Length > 0
         ? "Invited · No LUMA account yet"
-        : SelectedAssignee is null ? "Required" : SelectedAssignee.IsCurrentUser ? SelectedAssignee.Name : SelectedAssignee.Email;
+        : SelectedAssignee is null ? "No Task Doer yet" : SelectedAssignee.IsCurrentUser ? SelectedAssignee.Name : SelectedAssignee.Email;
     private string SelectedAssigneeInitial => SelectedInvitationEmail.Length > 0
         ? "@"
-        : SelectedAssignee is null ? "?" : InitialFor(SelectedAssignee.Name);
+        : SelectedAssignee is null ? "—" : InitialFor(SelectedAssignee.Name);
     private string NormalizedAssigneeSearch => AssigneeSearch.Trim();
     private IReadOnlyList<AssigneeOption> FilteredAssignees => string.IsNullOrWhiteSpace(AssigneeSearch)
         ? Assignees
@@ -187,12 +192,11 @@
     private async Task Submit()
     {
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
-        AssigneeError = SelectedAssignee is null && SelectedInvitationEmail.Length == 0 ? "Choose an assignee." : string.Empty;
-        DeadlineError = Deadline is null ? "Choose a deadline." : string.Empty;
+        DeadlineError = string.Empty;
         if (Deadline is not null && Deadline.Value < DateOnly.FromDateTime(DateTime.Today))
             DeadlineError = "Deadline cannot be before today.";
 
-        if (TitleError.Length > 0 || AssigneeError.Length > 0 || DeadlineError.Length > 0)
+        if (TitleError.Length > 0 || DeadlineError.Length > 0)
         {
             return;
         }
@@ -221,7 +225,14 @@
         SelectedAssigneeId = userId;
         SelectedInvitationEmail = string.Empty;
         AssigneeSearch = string.Empty;
-        AssigneeError = string.Empty;
+        ShowAssigneePicker = false;
+    }
+
+    private void SelectUnassigned()
+    {
+        SelectedAssigneeId = null;
+        SelectedInvitationEmail = string.Empty;
+        AssigneeSearch = string.Empty;
         ShowAssigneePicker = false;
     }
 
@@ -231,7 +242,6 @@
         SelectedAssigneeId = null;
         SelectedInvitationEmail = NormalizedAssigneeSearch;
         AssigneeSearch = string.Empty;
-        AssigneeError = string.Empty;
         ShowAssigneePicker = false;
     }
 
@@ -243,7 +253,6 @@
         var exactUser = Assignees.FirstOrDefault(user =>
             string.Equals(user.Email, NormalizedAssigneeSearch, StringComparison.OrdinalIgnoreCase));
         SelectedAssigneeId = exactUser?.Id;
-        if (exactUser is not null) AssigneeError = string.Empty;
     }
 
     private void SetDeadline(DateOnly? deadline)

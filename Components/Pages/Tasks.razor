@@ -99,6 +99,14 @@
                             <option value="AllTasks">All Tasks</option>
                             <option value="OnlyMe">Only Me</option>
                         </select></label>
+                        <label><span>Assignee</span><select @bind="AssigneeFilter" @bind:after="ApplyFiltersAsync">
+                            <option value="">All</option>
+                            <option value="Unassigned">Unassigned</option>
+                            @foreach (var assignee in AssigneeOptions)
+                            {
+                                <option value="@assignee.Id">@assignee.Name</option>
+                            }
+                        </select></label>
                         <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
                             <option value="">All</option><option value="ToDo">To Do</option>
                             <option value="InProgress">In Progress</option><option value="Done">Done</option>
@@ -113,7 +121,8 @@
                             <option value="High">High</option><option value="Urgent">Urgent</option>
                         </select></label>
                         <label><span>Deadline</span><select @bind="DeadlineFilter" @bind:after="ApplyFiltersAsync">
-                            <option value="All">All</option><option value="Overdue">Overdue</option>
+                            <option value="All">All</option><option value="NoDeadline">No deadline</option>
+                            <option value="Overdue">Overdue</option>
                             <option value="Today">Today</option><option value="ThisWeek">This week</option>
                         </select></label>
                         <label><span>Sort</span><select @bind="SortOrder" @bind:after="ApplyFiltersAsync">
@@ -247,10 +256,17 @@
                                                         @if (task.Priority != TaskPriority.None) { <i aria-hidden="true">●</i> }
                                                         @PriorityLabel(task.Priority)
                                                     </span>
-                                                    <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited)">@StatusLabel(task.AssignmentStatus, task.IsInvited)</span>
+                                                    <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited, task.IsUnassigned)">@StatusLabel(task.AssignmentStatus, task.IsInvited, task.IsUnassigned)</span>
                                                 </span>
                                                 <span class="task-board-deadline @deadlineClass">
-                                                    <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
+                                                    @if (task.Deadline is { } boardDeadline)
+                                                    {
+                                                        <time datetime="@boardDeadline.ToString("yyyy-MM-dd")">@FormatDeadline(boardDeadline)</time>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>No deadline</span>
+                                                    }
                                                 </span>
                                             </button>
                                         }
@@ -291,14 +307,21 @@
                                                 {
                                                     <span class="task-project-chip">◇ @task.ProjectName</span>
                                                 }
-                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited)">@StatusLabel(task.AssignmentStatus, task.IsInvited)</span>
+                                                <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@StatusLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</span>
                                                 <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
                                                 <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
                                             </span>
                                         </span>
                                         <span class="task-card-deadline @deadlineClass">
                                             <small>Deadline</small>
-                                            <time datetime="@task.Deadline.ToString("yyyy-MM-dd")">@FormatDeadline(task.Deadline)</time>
+                                            @if (task.Deadline is { } deadline)
+                                            {
+                                                <time datetime="@deadline.ToString("yyyy-MM-dd")">@FormatDeadline(deadline)</time>
+                                            }
+                                            else
+                                            {
+                                                <span>No deadline</span>
+                                            }
                                         </span>
                                         <span class="task-card-arrow" aria-hidden="true">›</span>
                                     </button>
@@ -328,9 +351,9 @@
     <TaskDetailsDialog Details="@SelectedTask" IsLoading="@IsDetailsLoading"
                        ErrorMessage="@DetailsError" ActionError="@DetailsActionError"
                        NoticeMessage="@DetailsNotice"
-                       IsAccepting="@IsAcceptingTask" IsReviewingDeadline="@IsReviewingDeadline"
+                       IsAccepting="@IsAcceptingTask" IsTaking="@IsTakingTask" IsReviewingDeadline="@IsReviewingDeadline"
                        IsChangingWorkStatus="@IsChangingWorkStatus"
-                       AcceptRequested="AcceptTaskAsync" DeadlineChangeRequested="OpenDeadlineRequest"
+                       AcceptRequested="AcceptTaskAsync" TakeRequested="TakeTaskAsync" DeadlineChangeRequested="OpenDeadlineRequest"
                        ApproveDeadlineChangeRequested="ApproveDeadlineChangeAsync"
                        DeclineDeadlineChangeRequested="DeclineDeadlineChangeAsync"
                        EditRequested="OpenTaskEdit"
@@ -344,9 +367,9 @@
                     CancelRequested="CloseTaskEdit" SubmitRequested="SaveTaskEditAsync" />
 }
 
-@if (ShowDeadlineRequest && SelectedTask is not null)
+@if (ShowDeadlineRequest && SelectedTask?.Deadline is { } selectedDeadline)
 {
-    <TaskDeadlineRequestDialog TaskId="@SelectedTask.Id" CurrentDeadline="@SelectedTask.Deadline"
+    <TaskDeadlineRequestDialog TaskId="@SelectedTask.Id" CurrentDeadline="@selectedDeadline"
                                ErrorMessage="@DeadlineRequestError" IsSubmitting="@IsSubmittingDeadlineRequest"
                                CancelRequested="CloseDeadlineRequest" SubmitRequested="SubmitDeadlineRequestAsync" />
 }
@@ -383,6 +406,7 @@
     private bool IsLoading = true;
     private bool IsDetailsLoading;
     private bool IsAcceptingTask;
+    private bool IsTakingTask;
     private bool ShowDeadlineRequest;
     private bool IsSubmittingDeadlineRequest;
     private bool IsReviewingDeadline;
@@ -394,6 +418,7 @@
     private string BoardNotice = string.Empty;
     private TaskListTab ActiveTab = TaskListTab.Tasks;
     private IReadOnlyList<RelatedLumaTask> RelatedTasks = [];
+    private IReadOnlyList<TaskAssigneeFilterOption> AssigneeOptions = [];
     private LumaTaskDetails? SelectedTask;
     private TaskPresentation Presentation = TaskPresentation.List;
     private DotNetObjectReference<Tasks>? BoardDragReference;
@@ -404,6 +429,7 @@
     private string AssignmentStatusFilter = string.Empty;
     private string PriorityFilter = string.Empty;
     private string RelationFilter = nameof(TaskRelationFilter.AllTasks);
+    private string AssigneeFilter = string.Empty;
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
@@ -414,6 +440,7 @@
         AssignmentStatusFilter.Length > 0 ||
         PriorityFilter.Length > 0 ||
         RelationFilter != nameof(TaskRelationFilter.AllTasks) ||
+        AssigneeFilter.Length > 0 ||
         DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
         SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
@@ -433,7 +460,7 @@
     {
         var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
         CurrentUserName = principal.Identity?.Name ?? "User";
-        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync());
+        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync(), LoadAssigneeOptionsAsync());
         if (LinkedTaskId is not null)
             await OpenTaskAsync(LinkedTaskId.Value);
     }
@@ -575,6 +602,18 @@
 
     private Task ApplyFiltersAsync() => LoadTasksAsync(showLoading: false);
 
+    private async Task LoadAssigneeOptionsAsync()
+    {
+        try
+        {
+            AssigneeOptions = await TaskStore.LoadAssigneeFilterOptionsAsync();
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            LoadError = exception.Message;
+        }
+    }
+
     private async Task ClearFiltersAsync()
     {
         SearchText = string.Empty;
@@ -582,19 +621,22 @@
         AssignmentStatusFilter = string.Empty;
         PriorityFilter = string.Empty;
         RelationFilter = nameof(TaskRelationFilter.AllTasks);
+        AssigneeFilter = string.Empty;
         DeadlineFilter = nameof(TaskDeadlineFilter.All);
         SortOrder = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(showLoading: false);
     }
 
     private TaskListQuery CurrentListQuery() => new(
-        SearchText,
-        ParseOptional<TaskWorkStatus>(WorkStatusFilter),
-        ParseOptional<TaskAssignmentStatus>(AssignmentStatusFilter),
-        ParseOptional<TaskPriority>(PriorityFilter),
-        Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
-        Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
-        Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllTasks);
+        Search: SearchText,
+        WorkStatus: ParseOptional<TaskWorkStatus>(WorkStatusFilter),
+        AssignmentStatus: ParseOptional<TaskAssignmentStatus>(AssignmentStatusFilter),
+        Priority: ParseOptional<TaskPriority>(PriorityFilter),
+        Deadline: Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
+        Sort: Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
+        Relation: Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllTasks,
+        AssigneeId: Guid.TryParse(AssigneeFilter, out var assigneeId) ? assigneeId : null,
+        UnassignedOnly: AssigneeFilter == "Unassigned");
 
     private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
@@ -797,6 +839,28 @@
         }
     }
 
+    private async Task TakeTaskAsync(Guid taskId)
+    {
+        if (SelectedTask?.Id != taskId) return;
+        DetailsActionError = string.Empty;
+        DetailsNotice = string.Empty;
+        IsTakingTask = true;
+        try
+        {
+            SelectedTask = await TaskStore.TakeAsync(taskId, new TakeLumaTaskRequest(SelectedTask.Version));
+            DetailsNotice = "Task assigned to you and accepted.";
+            await LoadTasksAsync();
+        }
+        catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or System.ComponentModel.DataAnnotations.ValidationException)
+        {
+            DetailsActionError = exception.Message;
+        }
+        finally
+        {
+            IsTakingTask = false;
+        }
+    }
+
     private void OpenDeadlineRequest(Guid taskId)
     {
         if (SelectedTask?.Id != taskId) return;
@@ -923,23 +987,25 @@
         }
     }
 
-    private static string FormatDeadline(DateOnly deadline)
+    private static string FormatDeadline(DateOnly? deadline)
     {
+        if (deadline is null) return "No deadline";
         var today = DateOnly.FromDateTime(DateTime.Today);
-        if (deadline == today) return "Today";
-        if (deadline < today) return $"Overdue · {deadline:MMM d, yyyy}";
-        return deadline.ToString("MMM d, yyyy");
+        if (deadline.Value == today) return "Today";
+        if (deadline.Value < today) return $"Overdue · {deadline.Value:MMM d, yyyy}";
+        return deadline.Value.ToString("MMM d, yyyy");
     }
 
-    private static string DeadlineClass(DateOnly deadline)
+    private static string DeadlineClass(DateOnly? deadline)
     {
+        if (deadline is null) return "no-deadline";
         var today = DateOnly.FromDateTime(DateTime.Today);
-        if (deadline < today) return "overdue";
-        return deadline == today ? "due-today" : string.Empty;
+        if (deadline.Value < today) return "overdue";
+        return deadline.Value == today ? "due-today" : string.Empty;
     }
 
-    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false) =>
-        isInvited ? "invited" :
+    private static string StatusClass(TaskAssignmentStatus status, bool isInvited = false, bool isUnassigned = false) =>
+        isUnassigned ? "unassigned" : isInvited ? "invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "accepted",
@@ -947,8 +1013,8 @@
             _ => "pending"
         };
 
-    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false) =>
-        isInvited ? "Invited" :
+    private static string StatusLabel(TaskAssignmentStatus status, bool isInvited = false, bool isUnassigned = false) =>
+        isUnassigned ? "Unassigned" : isInvited ? "Invited" :
         status switch
         {
             TaskAssignmentStatus.Accepted => "Accepted",
@@ -977,7 +1043,9 @@
         : $"{project.TaskCount} tasks · {project.DoneTaskCount} done";
 
     private static string RelationshipLabel(RelatedLumaTask task) =>
-        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+        IsUnassigned(task)
+            ? task.IsCreatedByCurrentUser ? "Created by you · Unassigned" : $"Unassigned · Created by {task.CreatorName}"
+            : task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
             ? "Personal task"
             : task.IsAssignedToCurrentUser
                 ? $"Assigned to you by {task.CreatorName}"
@@ -986,14 +1054,18 @@
                     : $"{task.CreatorName} → {task.AssigneeName}";
 
     private static string RelationshipClass(RelatedLumaTask task) =>
-        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+        IsUnassigned(task)
+            ? "company"
+            : task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
             ? "personal"
             : task.IsAssignedToCurrentUser
                 ? "assigned"
                 : task.IsCreatedByCurrentUser ? "created" : "company";
 
     private static string RelationshipMark(RelatedLumaTask task) =>
-        task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
+        IsUnassigned(task)
+            ? "—"
+            : task.IsCreatedByCurrentUser && task.IsAssignedToCurrentUser
             ? "•"
             : task.IsAssignedToCurrentUser
                 ? "✓"
@@ -1003,8 +1075,10 @@
         .Select(task => new BoardTaskItem(
             task.Id, task.Title, RelationshipLabel(task), task.ProjectName, task.Deadline,
             task.AssignmentStatus, task.WorkStatus, task.Priority, task.Version, task.IsInvited,
-            CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus)))
+            IsUnassigned(task), CanDrag(task.CanManageWorkStatus, task.AssignmentStatus, task.WorkStatus)))
         .ToArray();
+
+    private static bool IsUnassigned(RelatedLumaTask task) => task.AssigneeId is null && !task.IsInvited;
 
     private static bool CanDrag(bool canManage, TaskAssignmentStatus assignmentStatus, TaskWorkStatus workStatus) =>
         canManage && assignmentStatus == TaskAssignmentStatus.Accepted && workStatus != TaskWorkStatus.Done;
@@ -1029,11 +1103,12 @@
         string Title,
         string RelationshipLabel,
         string ProjectName,
-        DateOnly Deadline,
+        DateOnly? Deadline,
         TaskAssignmentStatus AssignmentStatus,
         TaskWorkStatus WorkStatus,
         TaskPriority Priority,
         Guid Version,
         bool IsInvited,
+        bool IsUnassigned,
         bool CanDrag);
 }

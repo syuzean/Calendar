@@ -184,6 +184,7 @@
 .project-task-badges .work.done { background:#e8f6ee; color:#35734d; }
 .project-task-badges .assignment { background:#f2eff5; color:#706778; }
 .project-task-card time { color:#77707f; font-size:8px; white-space:nowrap; }
+.project-task-no-deadline { color:#918997; font-size:8px; white-space:nowrap; }
 .project-task-arrow { color:#aaa1b4; font-size:20px; }
 
 .project-task-board {
@@ -288,6 +289,7 @@
 .project-board-deadline { border-top: 1px solid #f0edf2; padding-top: 7px; color: #716a78; font-size: 8px; font-weight: 700; }
 .project-board-deadline.overdue { color: #b04f60; }
 .project-board-deadline.due-today { color: #6844dc; }
+.project-board-deadline.no-deadline { color: #918997; }
 
 .project-board-message {
     margin-top: 10px;

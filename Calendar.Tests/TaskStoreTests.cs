@@ -255,15 +255,36 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task MissingAssignee_IsRejected()
+    public async Task EmptyAssigneeId_IsRejected()
     {
         var fixture = await TestFixture.CreateAsync();
 
         var exception = await Assert.ThrowsAsync<ValidationException>(() =>
             fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(Guid.Empty)));
 
-        Assert.Contains("assignee is required", exception.Message);
+        Assert.Contains("valid task assignee", exception.Message);
         await AssertNoTasksAsync(fixture);
+    }
+
+    [Fact]
+    public async Task Task_CanBeCreatedUnassignedWithoutCreatingInvitationOrNotification()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            AssigneeId = null,
+            AssigneeEmail = null
+        };
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(request);
+
+        await using var db = fixture.CreateDbContext();
+        var task = await db.Tasks.SingleAsync();
+        Assert.Equal(taskId, task.Id);
+        Assert.Null(task.AssigneeId);
+        Assert.Equal(TaskAssignmentStatus.Pending, task.AssignmentStatus);
+        Assert.Empty(await db.TaskInvitations.ToListAsync());
+        Assert.Empty(fixture.Notifier.CreatedNotifications);
     }
 
     [Fact]
@@ -280,16 +301,15 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task MissingDeadline_IsRejected()
+    public async Task Task_CanBeCreatedWithoutDeadline()
     {
         var fixture = await TestFixture.CreateAsync();
         var request = NewRequest(fixture.Assignee.Id) with { Deadline = null };
 
-        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
-            fixture.CreateStore(fixture.Creator).CreateAsync(request));
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(request);
 
-        Assert.Contains("deadline is required", exception.Message);
-        await AssertNoTasksAsync(fixture);
+        await using var db = fixture.CreateDbContext();
+        Assert.Null((await db.Tasks.SingleAsync(task => task.Id == taskId)).Deadline);
     }
 
     [Fact]
@@ -536,6 +556,74 @@ public sealed class TaskStoreTests
 
         Assert.Equal(overdueTask.Id, Assert.Single(assigned).Id);
         Assert.Equal(overdueDeadline, details.Deadline);
+    }
+
+    [Fact]
+    public async Task AuthenticatedUser_CanTakeUnassignedTask_AndItIsAcceptedImmediately()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            AssigneeId = null,
+            AssigneeEmail = null,
+            Deadline = null
+        };
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(request);
+        var takerStore = fixture.CreateStore(fixture.Unrelated);
+        var before = await takerStore.LoadDetailsAsync(taskId);
+
+        var taken = await takerStore.TakeAsync(taskId, new TakeLumaTaskRequest(before.Version));
+
+        Assert.Equal(fixture.Unrelated.Name, taken.AssigneeName);
+        Assert.Equal(TaskAssignmentStatus.Accepted, taken.AssignmentStatus);
+        Assert.Equal(TaskWorkStatus.ToDo, taken.WorkStatus);
+        Assert.NotNull(taken.AcceptedAt);
+        Assert.True(taken.CanManageWorkStatus);
+        Assert.False(taken.CanTake);
+        var inProgress = await takerStore.ChangeWorkStatusAsync(
+            taskId, new ChangeTaskWorkStatusRequest(TaskWorkStatus.InProgress, taken.Version));
+        Assert.Equal(TaskWorkStatus.InProgress, inProgress.WorkStatus);
+        await using var db = fixture.CreateDbContext();
+        var persisted = await db.Tasks.SingleAsync(task => task.Id == taskId);
+        Assert.Equal(fixture.Unrelated.Id, persisted.AssigneeId);
+        Assert.Equal(TaskAssignmentStatus.Accepted, persisted.AssignmentStatus);
+        Assert.Equal(TaskWorkStatus.InProgress, persisted.WorkStatus);
+        Assert.NotNull(persisted.AcceptedAt);
+    }
+
+    [Fact]
+    public async Task AssignedOrInvitedTask_CannotBeTaken()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var assignedId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+        var invitedId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewEmailRequest("future.doer@example.com"));
+        var store = fixture.CreateStore(fixture.Unrelated);
+        var assigned = await store.LoadDetailsAsync(assignedId);
+        var invited = await store.LoadDetailsAsync(invitedId);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            store.TakeAsync(assignedId, new TakeLumaTaskRequest(assigned.Version)));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            store.TakeAsync(invitedId, new TakeLumaTaskRequest(invited.Version)));
+    }
+
+    [Fact]
+    public async Task TakeTask_RejectsStaleVersion()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with { AssigneeId = null, AssigneeEmail = null };
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var taskId = await makerStore.CreateAsync(request);
+        var stale = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+        await makerStore.UpdateContentAsync(taskId, new(
+            "Updated title", request.Description, stale.Version, TaskPriority.Low));
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Unrelated).TakeAsync(taskId, new TakeLumaTaskRequest(stale.Version)));
+
+        Assert.Contains("changed in another session", exception.Message);
+        await using var db = fixture.CreateDbContext();
+        Assert.Null((await db.Tasks.SingleAsync(task => task.Id == taskId)).AssigneeId);
     }
 
     [Fact]
@@ -1493,6 +1581,69 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task AssigneeFilter_SupportsUnassignedAndSpecificUsers()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var unassigned = await SeedTaskAsync(fixture, "Unassigned", unassigned: true);
+        var assigned = await SeedTaskAsync(fixture, "Assigned", assignee: fixture.Assignee);
+        await fixture.CreateStore(fixture.Creator).CreateAsync(NewEmailRequest("invited@example.com"));
+        var store = fixture.CreateStore(fixture.Creator);
+
+        var unassignedTasks = await store.LoadRelatedAsync(new TaskListQuery(UnassignedOnly: true));
+        var assignedTasks = await store.LoadRelatedAsync(new TaskListQuery(AssigneeId: fixture.Assignee.Id));
+
+        Assert.Equal(unassigned.Id, Assert.Single(unassignedTasks).Id);
+        Assert.Equal(assigned.Id, Assert.Single(assignedTasks).Id);
+    }
+
+    [Fact]
+    public async Task NoDeadlineFilter_ReturnsOnlyTasksWithoutDeadline()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var noDeadline = await SeedTaskAsync(fixture, "No deadline", noDeadline: true);
+        await SeedTaskAsync(fixture, "Has deadline");
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
+            new TaskListQuery(Deadline: TaskDeadlineFilter.NoDeadline));
+
+        Assert.Equal(noDeadline.Id, Assert.Single(tasks).Id);
+        Assert.Null(tasks[0].Deadline);
+    }
+
+    [Fact]
+    public async Task NullableFilters_CombineWithOnlyMe()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var expected = await SeedTaskAsync(
+            fixture, "Mine without assignment or deadline", unassigned: true, noDeadline: true);
+        await SeedTaskAsync(
+            fixture, "Other unassigned task", creator: fixture.Assignee,
+            unassigned: true, noDeadline: true);
+        await SeedTaskAsync(fixture, "Mine with deadline", unassigned: true);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(new TaskListQuery(
+            Relation: TaskRelationFilter.OnlyMe,
+            Deadline: TaskDeadlineFilter.NoDeadline,
+            UnassignedOnly: true));
+
+        Assert.Equal(expected.Id, Assert.Single(tasks).Id);
+    }
+
+    [Fact]
+    public async Task DeadlineNearestSort_PlacesNoDeadlineAfterDatedTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var noDeadline = await SeedTaskAsync(fixture, "No deadline", noDeadline: true);
+        var dated = await SeedTaskAsync(
+            fixture, "Dated", deadline: DateOnly.FromDateTime(DateTime.Today.AddDays(20)));
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
+            new TaskListQuery(Sort: TaskSortOrder.DeadlineNearest));
+
+        Assert.Equal([dated.Id, noDeadline.Id], tasks.Select(task => task.Id));
+    }
+
+    [Fact]
     public async Task OverdueAndTodayFilters_ReturnMatchingDeadlines()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -2031,16 +2182,18 @@ public sealed class TaskStoreTests
         DateTime? createdAt = null,
         AppUser? creator = null,
         AppUser? assignee = null,
-        LumaProject? project = null)
+        LumaProject? project = null,
+        bool unassigned = false,
+        bool noDeadline = false)
     {
         var task = new LumaTask
         {
             Title = title,
             Description = string.Empty,
             CreatorId = (creator ?? fixture.Creator).Id,
-            AssigneeId = (assignee ?? fixture.Assignee).Id,
+            AssigneeId = unassigned ? null : (assignee ?? fixture.Assignee).Id,
             ProjectId = project?.Id,
-            Deadline = deadline ?? DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
+            Deadline = noDeadline ? null : deadline ?? DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
             CreatedAt = createdAt ?? DateTime.UtcNow,
             Priority = priority,
             AssignmentStatus = assignmentStatus,

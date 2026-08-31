@@ -151,6 +151,11 @@
     color: #6844dc;
 }
 
+.task-assignee-avatar.unassigned {
+    background: #f0edf4;
+    color: #7d7486;
+}
+
 .task-assignee-menu button.task-invite-option {
     margin-top: 2px;
     border-top: 1px solid #f0ecf3;
