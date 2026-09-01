@@ -23,6 +23,8 @@ public sealed class InboxStore(
     IDbContextFactory<CalendarDbContext> dbFactory,
     AuthenticationStateProvider authenticationStateProvider)
 {
+    public event Action? Changed;
+
     public async Task<int> GetUnreadCountAsync()
     {
         var userId = await GetCurrentUserIdAsync();
@@ -68,6 +70,7 @@ public sealed class InboxStore(
         {
             item.ReadAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            Changed?.Invoke();
         }
 
         return true;
@@ -86,6 +89,7 @@ public sealed class InboxStore(
         foreach (var item in unread)
             item.ReadAt = readAt;
         await db.SaveChangesAsync();
+        Changed?.Invoke();
         return unread.Count;
     }
 

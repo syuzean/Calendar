@@ -12,8 +12,6 @@
 
 <div class="calendar-app">
     <aside class="sidebar-panel">
-        <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
-        <LumaSectionNav />
         <button class="create-button" @onclick="CreateFromButton"><span>+</span> Create event</button>
         <section class="mini-calendar">
             <header><strong>@MiniDate.ToString("MMMM yyyy")</strong><div><button aria-label="Previous month" @onclick="() => MiniDate = MiniDate.AddMonths(-1)">‹</button><button aria-label="Next month" @onclick="() => MiniDate = MiniDate.AddMonths(1)">›</button></div></header>
@@ -30,15 +28,10 @@
             <button class="@(Scope == "Shared" ? "active" : "")" @onclick='() => Scope = "Shared"'><i class="scope-icon shared"></i> Shared with me <span>@Store.Events.Count(e => e.IsCollaborator)</span></button>
             <button class="@(Scope == "Public" ? "active" : "")" @onclick='() => Scope = "Public"'><i class="scope-icon public"></i> Public events <span>@Store.Events.Count(e => e.IsPublic && e.OwnerId != Store.CurrentUserId)</span></button>
         </section>
-        <div class="sidebar-footer"><span class="avatar">@Initials</span><div><strong>@Store.CurrentUserName</strong><small>Synced with MSSQL</small></div><form method="post" action="/account/logout"><AntiforgeryToken /><button title="Sign out" aria-label="Sign out">↗</button></form></div>
     </aside>
 
     <main class="calendar-main">
         <header class="main-header">
-            <div class="mobile-section-navigation">
-                <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
-                <LumaSectionNav />
-            </div>
             <div class="header-primary">
                 <button class="today-button" @onclick="GoToday">Today</button>
                 <div class="nav-buttons"><button aria-label="Previous" @onclick="Previous">‹</button><button aria-label="Next" @onclick="Next">›</button></div>
@@ -146,7 +139,6 @@
         "Public" => Store.Events.Where(item => item.OwnerId != Store.CurrentUserId && item.IsPublic).ToList(),
         _ => Store.Events
     };
-    private string Initials => string.Concat(Store.CurrentUserName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])));
 
     protected override void OnInitialized()
     {

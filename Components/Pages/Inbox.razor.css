@@ -1,12 +1,12 @@
+.inbox-app { grid-template-columns: minmax(0, 1fr); }
+
 .inbox-main {
     min-width: 0;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background: #fff;
 }
-
-.inbox-sidebar ::deep .luma-section-nav { margin-top: 25px; }
 
 .inbox-header {
     min-height: 90px;
@@ -29,8 +29,6 @@
     font-size: 23px;
     letter-spacing: -.5px;
 }
-
-.inbox-mobile-navigation { display: none; }
 
 .inbox-mark-all {
     min-height: 38px;
@@ -216,24 +214,10 @@
 }
 
 @media (max-width: 900px) {
-    .inbox-main { height: 100dvh; }
-
     .inbox-header {
-        min-height: 128px;
-        align-items: stretch;
-        flex-direction: column;
-        gap: 18px;
+        min-height: 82px;
         padding: 14px 16px 18px;
     }
-
-    .inbox-mobile-navigation {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-    }
-
-    .inbox-mobile-navigation .mobile-brand { display: flex; margin: 0; }
     .inbox-surface { padding: 18px; }
 }
 

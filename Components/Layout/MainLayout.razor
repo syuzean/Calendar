@@ -1,11 +1,47 @@
 ﻿@inherits LayoutComponentBase
 
-<main class="app-shell">
-    @Body
-</main>
+<AuthorizeView>
+    <Authorized Context="authenticationState">
+        <div class="workspace-shell">
+            <aside class="workspace-navigation">
+                <a class="workspace-brand" href="/" aria-label="Luma home">
+                    <span class="brand-mark">L</span>
+                    <span>Luma</span>
+                </a>
+                <LumaSectionNav />
+                <div class="workspace-user">
+                    <span class="avatar">@InitialsFor(authenticationState.User.Identity?.Name)</span>
+                    <div>
+                        <strong>@(authenticationState.User.Identity?.Name ?? "User")</strong>
+                        <small>Workspace member</small>
+                    </div>
+                    <form method="post" action="/account/logout">
+                        <AntiforgeryToken />
+                        <button title="Sign out" aria-label="Sign out">↗</button>
+                    </form>
+                </div>
+            </aside>
+            <div class="workspace-content">@Body</div>
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <main class="public-shell">@Body</main>
+    </NotAuthorized>
+</AuthorizeView>
 
 <div id="blazor-error-ui">
     An unhandled error has occurred.
     <a href="" class="reload">Reload</a>
     <a class="dismiss">🗙</a>
 </div>
+
+@code {
+    private static string InitialsFor(string? name)
+    {
+        var initials = string.Concat((name ?? string.Empty)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Take(2)
+            .Select(part => char.ToUpperInvariant(part[0])));
+        return string.IsNullOrEmpty(initials) ? "U" : initials;
+    }
+}

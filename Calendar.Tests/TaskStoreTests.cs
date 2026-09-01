@@ -2578,6 +2578,8 @@ public sealed class TaskStoreTests
             "Inbox update", "Description", (await makerStore.LoadDetailsAsync(taskId)).Version));
 
         var assigneeInbox = fixture.CreateInboxStore(fixture.Assignee);
+        var badgeRefreshes = 0;
+        assigneeInbox.Changed += () => badgeRefreshes++;
         var initial = await assigneeInbox.LoadRecentAsync();
         Assert.Equal(2, initial.UnreadCount);
         Assert.Equal(2, await assigneeInbox.GetUnreadCountAsync());
@@ -2593,6 +2595,7 @@ public sealed class TaskStoreTests
         var afterAll = await assigneeInbox.LoadRecentAsync();
         Assert.Equal(0, afterAll.UnreadCount);
         Assert.All(afterAll.Items, item => Assert.True(item.IsRead));
+        Assert.Equal(2, badgeRefreshes);
     }
 
     [Fact]

@@ -2,7 +2,6 @@
 @rendermode InteractiveServer
 @attribute [Authorize]
 @inject InboxStore InboxStore
-@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 @using global::Calendar.Models
 @using global::Calendar.Services
@@ -10,25 +9,8 @@
 <PageTitle>Inbox · Luma</PageTitle>
 
 <div class="calendar-app inbox-app">
-    <aside class="sidebar-panel inbox-sidebar">
-        <div class="brand"><span class="brand-mark">L</span><span>Luma</span></div>
-        <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
-        <div class="sidebar-footer">
-            <span class="avatar">@Initials</span>
-            <div><strong>@CurrentUserName</strong><small>Synced with MSSQL</small></div>
-            <form method="post" action="/account/logout">
-                <AntiforgeryToken />
-                <button title="Sign out" aria-label="Sign out">↗</button>
-            </form>
-        </div>
-    </aside>
-
     <main class="inbox-main">
         <header class="inbox-header">
-            <div class="inbox-mobile-navigation">
-                <div class="mobile-brand"><span class="brand-mark">L</span><span>Luma</span></div>
-                <LumaSectionNav RefreshKey="@InboxNavRefreshKey" />
-            </div>
             <div class="inbox-heading-row">
                 <div>
                     <span class="eyebrow">TASK ACTIVITY</span>
@@ -106,29 +88,13 @@
 </div>
 
 @code {
-    private string CurrentUserName = "User";
     private bool IsLoading = true;
     private string ErrorMessage = string.Empty;
     private int UnreadCount;
-    private long InboxNavRefreshKey;
     private IReadOnlyList<InboxItemSummary> Items = [];
-
-    private string Initials
-    {
-        get
-        {
-            var initials = string.Concat(CurrentUserName
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Take(2)
-                .Select(part => char.ToUpperInvariant(part[0])));
-            return string.IsNullOrEmpty(initials) ? "U" : initials;
-        }
-    }
 
     protected override async Task OnInitializedAsync()
     {
-        var principal = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
-        CurrentUserName = principal.Identity?.Name ?? "User";
         await LoadAsync();
     }
 
@@ -160,7 +126,6 @@
     {
         if (await InboxStore.MarkReadAsync(itemId))
         {
-            InboxNavRefreshKey++;
             await LoadAsync();
         }
     }
@@ -168,7 +133,6 @@
     private async Task MarkAllReadAsync()
     {
         await InboxStore.MarkAllReadAsync();
-        InboxNavRefreshKey++;
         await LoadAsync();
     }
 
