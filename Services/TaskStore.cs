@@ -16,7 +16,8 @@ public sealed record CreateLumaTaskRequest(
     TaskPriority Priority = TaskPriority.None,
     string? AssigneeEmail = null,
     Guid? ProjectId = null,
-    string? ExpectedResult = null);
+    string? ExpectedResult = null,
+    IReadOnlyList<TaskAttachmentUpload>? Attachments = null);
 
 public sealed record RequestTaskDeadlineChange(
     DateOnly? ProposedDeadline,
@@ -28,7 +29,32 @@ public sealed record UpdateLumaTaskContentRequest(
     Guid Version,
     TaskPriority? Priority = null,
     Guid? ProjectId = null,
-    string? ExpectedResult = null);
+    string? ExpectedResult = null,
+    IReadOnlyList<TaskAttachmentUpload>? NewAttachments = null,
+    IReadOnlyCollection<Guid>? RemovedAttachmentIds = null);
+
+public sealed record TaskAttachmentUpload(
+    string FileName,
+    string ContentType,
+    long Length,
+    Func<Stream> OpenReadStream);
+
+public sealed record TaskAttachmentDetails(
+    Guid Id,
+    string FileName,
+    string ContentType,
+    long SizeBytes,
+    DateTime CreatedAt)
+{
+    public string Url => $"/task-attachments/{Id:D}";
+}
+
+public static class TaskAttachmentRules
+{
+    public const long MaximumFileSizeBytes = 5 * 1024 * 1024;
+    public const long MaximumTotalSizeBytes = 25 * 1024 * 1024;
+    public const int MaximumAttachmentCount = 10;
+}
 
 public enum TaskDeadlineFilter
 {
@@ -151,7 +177,8 @@ public sealed record LumaTaskDetails(
     bool CanEdit,
     bool CanManageWorkStatus,
     bool CanComment,
-    bool CanTake);
+    bool CanTake,
+    IReadOnlyList<TaskAttachmentDetails> Attachments);
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -163,6 +190,7 @@ public sealed class TaskStore(
     AuthenticationStateProvider authenticationStateProvider,
     ITaskNotifier taskNotifier,
     ITaskLinkBuilder taskLinkBuilder,
+    ITaskAttachmentStorage attachmentStorage,
     ILogger<TaskStore> logger)
 {
     public string? LastNotice { get; private set; }
@@ -255,7 +283,19 @@ public sealed class TaskStore(
             doer?.Id,
             InboxActivityType.TaskAssigned,
             $"{maker.Name} assigned “{entity.Title}” to you.");
-        await db.SaveChangesAsync();
+        var storedAttachments = await StoreAttachmentsAsync(
+            entity.Id, creatorId, request.Attachments, 0, 0);
+        foreach (var attachment in storedAttachments)
+            entity.Attachments.Add(attachment);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            await DeleteStoredAttachmentsAsync(storedAttachments);
+            throw;
+        }
         if (doer is not null)
             await NotifyCreatedAfterCommitAsync(entity, maker, doer);
         else if (invitationEmail is not null)
@@ -425,7 +465,16 @@ public sealed class TaskStore(
                 item.RequestedDeadline,
                 item.DeadlineChangeComment,
                 item.DeadlineChangeRequestedAt,
-                item.Version
+                item.Version,
+                Attachments = item.Attachments
+                    .OrderBy(attachment => attachment.CreatedAt)
+                    .Select(attachment => new TaskAttachmentDetails(
+                        attachment.Id,
+                        attachment.OriginalFileName,
+                        attachment.ContentType,
+                        attachment.SizeBytes,
+                        attachment.CreatedAt))
+                    .ToList()
             })
             .SingleOrDefaultAsync();
 
@@ -456,7 +505,8 @@ public sealed class TaskStore(
             task.CreatorId == currentUserId,
             task.AssigneeId == currentUserId,
             task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
-            task.AssigneeId is null && !task.HasInvitation);
+            task.AssigneeId is null && !task.HasInvitation,
+            task.Attachments);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -659,7 +709,23 @@ public sealed class TaskStore(
         var expectedResultChanged = !string.Equals(task.ExpectedResult, expectedResult, StringComparison.Ordinal);
         var priorityChanged = task.Priority != priority;
         var projectChanged = task.ProjectId != request.ProjectId;
-        if (!titleChanged && !problemChanged && !expectedResultChanged && !priorityChanged && !projectChanged)
+        var removedIds = (request.RemovedAttachmentIds ?? [])
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        var removedAttachments = task.Attachments
+            .Where(attachment => removedIds.Contains(attachment.Id))
+            .ToArray();
+        if (removedAttachments.Length != removedIds.Length)
+            throw new ValidationException("One or more selected attachments no longer belong to this task.");
+
+        var remainingCount = task.Attachments.Count - removedAttachments.Length;
+        var remainingSize = task.Attachments.Sum(attachment => attachment.SizeBytes) -
+                            removedAttachments.Sum(attachment => attachment.SizeBytes);
+        var storedAttachments = await StoreAttachmentsAsync(
+            task.Id, currentUserId, request.NewAttachments, remainingCount, remainingSize);
+        var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0;
+        if (!titleChanged && !problemChanged && !expectedResultChanged && !priorityChanged && !projectChanged && !attachmentsChanged)
             return ToDetails(task, currentUserId);
 
         task.Title = title;
@@ -669,6 +735,10 @@ public sealed class TaskStore(
         task.ProjectId = request.ProjectId;
         task.Project = updatedProject;
         task.Version = Guid.NewGuid();
+        db.TaskAttachments.RemoveRange(removedAttachments);
+        foreach (var attachment in removedAttachments)
+            task.Attachments.Remove(attachment);
+        db.TaskAttachments.AddRange(storedAttachments);
 
         QueueInboxItem(
             db,
@@ -677,7 +747,27 @@ public sealed class TaskStore(
             task.AssigneeId,
             InboxActivityType.TaskUpdated,
             $"{task.Creator!.Name} updated “{task.Title}”.");
-        await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
+        try
+        {
+            await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
+        }
+        catch
+        {
+            await DeleteStoredAttachmentsAsync(storedAttachments);
+            throw;
+        }
+
+        foreach (var attachment in removedAttachments)
+        {
+            try
+            {
+                await attachmentStorage.DeleteAsync(attachment.StorageKey);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Removed task attachment file {StorageKey} could not be deleted.", attachment.StorageKey);
+            }
+        }
         return ToDetails(task, currentUserId);
     }
 
@@ -936,6 +1026,132 @@ public sealed class TaskStore(
         return string.Join("\n\n", sections);
     }
 
+    private async Task<IReadOnlyList<TaskAttachment>> StoreAttachmentsAsync(
+        Guid taskId,
+        Guid uploaderUserId,
+        IReadOnlyList<TaskAttachmentUpload>? uploads,
+        int existingCount,
+        long existingSizeBytes)
+    {
+        if (uploads is null || uploads.Count == 0) return [];
+        if (existingCount + uploads.Count > TaskAttachmentRules.MaximumAttachmentCount)
+            throw new ValidationException($"A task can have up to {TaskAttachmentRules.MaximumAttachmentCount} images.");
+
+        var stored = new List<TaskAttachment>();
+        var totalSize = existingSizeBytes;
+        try
+        {
+            foreach (var upload in uploads)
+            {
+                if (upload.Length <= 0)
+                    throw new ValidationException("Choose a non-empty image attachment.");
+                if (upload.Length > TaskAttachmentRules.MaximumFileSizeBytes)
+                    throw new ValidationException("Each task image must be 5 MB or smaller.");
+
+                var content = await ReadImageAsync(upload);
+                totalSize += content.Bytes.LongLength;
+                if (totalSize > TaskAttachmentRules.MaximumTotalSizeBytes)
+                    throw new ValidationException("Task attachments cannot exceed 25 MB in total.");
+
+                var extension = content.ContentType switch
+                {
+                    "image/png" => ".png",
+                    "image/jpeg" => ".jpg",
+                    "image/gif" => ".gif",
+                    "image/webp" => ".webp",
+                    _ => throw new ValidationException("Only PNG, JPEG, GIF, and WebP images are supported.")
+                };
+                var storageKey = $"{Guid.NewGuid():N}{extension}";
+                await using var imageStream = new MemoryStream(content.Bytes, writable: false);
+                await attachmentStorage.SaveAsync(storageKey, imageStream);
+
+                stored.Add(new TaskAttachment
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = taskId,
+                    UploadedByUserId = uploaderUserId,
+                    OriginalFileName = SafeFileName(upload.FileName, extension),
+                    ContentType = content.ContentType,
+                    SizeBytes = content.Bytes.LongLength,
+                    StorageKey = storageKey,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            return stored;
+        }
+        catch
+        {
+            await DeleteStoredAttachmentsAsync(stored);
+            throw;
+        }
+    }
+
+    private static async Task<ValidatedImage> ReadImageAsync(TaskAttachmentUpload upload)
+    {
+        await using var input = upload.OpenReadStream();
+        await using var output = new MemoryStream();
+        var buffer = new byte[81920];
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer);
+            if (read == 0) break;
+            if (output.Length + read > TaskAttachmentRules.MaximumFileSizeBytes)
+                throw new ValidationException("Each task image must be 5 MB or smaller.");
+            await output.WriteAsync(buffer.AsMemory(0, read));
+        }
+
+        var bytes = output.ToArray();
+        if (bytes.Length == 0)
+            throw new ValidationException("Choose a non-empty image attachment.");
+        var detectedType = DetectImageContentType(bytes)
+            ?? throw new ValidationException("Only valid PNG, JPEG, GIF, and WebP images are supported.");
+        var declaredType = upload.ContentType.Split(';', 2)[0].Trim();
+        if (!string.IsNullOrWhiteSpace(declaredType) &&
+            !string.Equals(declaredType, detectedType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationException("The attachment content does not match its image type.");
+        }
+
+        return new ValidatedImage(bytes, detectedType);
+    }
+
+    private async Task DeleteStoredAttachmentsAsync(IEnumerable<TaskAttachment> attachments)
+    {
+        foreach (var attachment in attachments)
+        {
+            try
+            {
+                await attachmentStorage.DeleteAsync(attachment.StorageKey);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Task attachment file {StorageKey} could not be cleaned up.", attachment.StorageKey);
+            }
+        }
+    }
+
+    private static string? DetectImageContentType(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length >= 8 && bytes[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }))
+            return "image/png";
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return "image/jpeg";
+        if (bytes.Length >= 6 &&
+            (bytes[..6].SequenceEqual("GIF87a"u8) || bytes[..6].SequenceEqual("GIF89a"u8)))
+            return "image/gif";
+        if (bytes.Length >= 12 && bytes[..4].SequenceEqual("RIFF"u8) && bytes.Slice(8, 4).SequenceEqual("WEBP"u8))
+            return "image/webp";
+        return null;
+    }
+
+    private static string SafeFileName(string fileName, string extension)
+    {
+        var safe = Path.GetFileName(fileName.Replace('/', Path.DirectorySeparatorChar)).Trim();
+        if (string.IsNullOrWhiteSpace(safe)) safe = $"task-image{extension}";
+        return safe.Length <= 255 ? safe : safe[..255];
+    }
+
     private static void QueueInboxItem(
         CalendarDbContext db,
         LumaTask task,
@@ -971,6 +1187,7 @@ public sealed class TaskStore(
             .Include(item => item.Assignee)
             .Include(item => item.Invitation)
             .Include(item => item.Project)
+            .Include(item => item.Attachments)
             .SingleOrDefaultAsync(item => item.Id == taskId)
         ?? throw new LumaTaskNotFoundException();
 
@@ -1033,7 +1250,16 @@ public sealed class TaskStore(
         task.CreatorId == currentUserId,
         task.AssigneeId == currentUserId,
         task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
-        task.AssigneeId is null && task.Invitation is null);
+        task.AssigneeId is null && task.Invitation is null,
+        task.Attachments
+            .OrderBy(attachment => attachment.CreatedAt)
+            .Select(attachment => new TaskAttachmentDetails(
+                attachment.Id,
+                attachment.OriginalFileName,
+                attachment.ContentType,
+                attachment.SizeBytes,
+                attachment.CreatedAt))
+            .ToArray());
 
     private async Task<Guid> GetCurrentUserIdAsync()
     {
@@ -1205,6 +1431,7 @@ public sealed class TaskStore(
         string.Equals(address.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private sealed record TaskUser(Guid Id, string Name, string Email);
+    private sealed record ValidatedImage(byte[] Bytes, string ContentType);
     private sealed record DeadlineRequestSnapshot(
         DateOnly CurrentDeadline,
         DateOnly RequestedDeadline,

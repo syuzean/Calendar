@@ -43,6 +43,8 @@ namespace Calendar
             });
             builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
             builder.Services.Configure<EmailLinkOptions>(builder.Configuration.GetSection(EmailLinkOptions.SectionName));
+            builder.Services.Configure<TaskAttachmentStorageOptions>(
+                builder.Configuration.GetSection(TaskAttachmentStorageOptions.SectionName));
             builder.Services.AddSingleton<IEventLinkBuilder, EventLinkBuilder>();
             builder.Services.AddSingleton<IInvitationAccessTokenService, InvitationAccessTokenService>();
             builder.Services.AddSingleton(_ =>
@@ -58,6 +60,8 @@ namespace Calendar
             builder.Services.AddScoped<TaskStore>();
             builder.Services.AddScoped<InboxStore>();
             builder.Services.AddSingleton<ITaskMarkdownRenderer, TaskMarkdownRenderer>();
+            builder.Services.AddSingleton<ITaskAttachmentStorage, LocalTaskAttachmentStorage>();
+            builder.Services.AddScoped<TaskAttachmentAccessService>();
             builder.Services.AddScoped<ProjectStore>();
 
             var app = builder.Build();
@@ -88,6 +92,19 @@ namespace Calendar
             app.MapAccountEndpoints();
             app.MapInvitationEndpoints();
             app.MapTaskInvitationEndpoints();
+            app.MapGet("/task-attachments/{attachmentId:guid}", async (
+                Guid attachmentId,
+                HttpContext httpContext,
+                TaskAttachmentAccessService attachmentAccess,
+                CancellationToken cancellationToken) =>
+            {
+                var userIdValue = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(userIdValue, out var userId)) return Results.Unauthorized();
+                var attachment = await attachmentAccess.OpenAsync(attachmentId, userId, cancellationToken);
+                return attachment is null
+                    ? Results.NotFound()
+                    : Results.Stream(attachment.Content, attachment.ContentType, enableRangeProcessing: true);
+            }).RequireAuthorization();
 
             app.Run();
         }

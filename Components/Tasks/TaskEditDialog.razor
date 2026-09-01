@@ -1,8 +1,9 @@
 @using global::Calendar.Services
 @using global::Calendar.Models
 
-<div class="dialog-backdrop" role="presentation" @onclick="Cancel">
-    <section class="event-dialog task-edit-dialog" role="dialog" aria-modal="true"
+<div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Cancel">
+    <TaskModalInteraction BackdropId="@BackdropId" ModalId="@ModalId" ScrollRegionId="@ScrollRegionId" />
+    <section id="@ModalId" class="event-dialog task-modal task-edit-dialog" role="dialog" aria-modal="true" tabindex="-1"
              aria-labelledby="task-edit-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header">
             <div>
@@ -13,7 +14,8 @@
             <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
         </header>
 
-        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+        <form class="task-modal-form" @onsubmit="Submit" @onsubmit:preventDefault="true">
+            <div id="@ScrollRegionId" class="task-modal-scroll">
             @if (!string.IsNullOrWhiteSpace(ErrorMessage))
             {
                 <div class="auth-error" role="alert">@ErrorMessage</div>
@@ -38,6 +40,30 @@
                     <textarea rows="4" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
                 </label>
             </div>
+            @if (Details.Attachments.Count > 0)
+            {
+                <div class="field task-existing-attachments">
+                    <span>Current attachments</span>
+                    <div>
+                        @foreach (var attachment in Details.Attachments)
+                        {
+                            var removed = RemovedAttachmentIds.Contains(attachment.Id);
+                            <article class="@(removed ? "removed" : null)">
+                                <img src="@attachment.Url" alt="" />
+                                <span><strong>@attachment.FileName</strong><small>@FormatSize(attachment.SizeBytes)</small></span>
+                                <button type="button" @onclick="() => ToggleAttachmentRemoval(attachment.Id)">
+                                    @(removed ? "Keep" : "Remove")
+                                </button>
+                            </article>
+                        }
+                    </div>
+                </div>
+            }
+            <div class="field">
+                <span>Add attachments <em>optional</em></span>
+                <TaskAttachmentPicker @ref="AttachmentPicker" />
+            </div>
+            </div>
             <div class="dialog-actions">
                 <span class="action-spacer"></span>
                 <button class="secondary-button" type="button" disabled="@IsSubmitting" @onclick="Cancel">Cancel</button>
@@ -55,11 +81,17 @@
     [Parameter] public EventCallback<UpdateLumaTaskContentRequest> SubmitRequested { get; set; }
 
     private string Title = string.Empty;
+    private readonly string ModalInstanceId = Guid.NewGuid().ToString("N");
+    private string BackdropId => $"task-edit-backdrop-{ModalInstanceId}";
+    private string ModalId => $"task-edit-modal-{ModalInstanceId}";
+    private string ScrollRegionId => $"task-edit-scroll-{ModalInstanceId}";
     private string Problem = string.Empty;
     private string ExpectedResult = string.Empty;
     private string TitleError = string.Empty;
     private TaskPriority Priority;
     private Guid? ProjectId;
+    private TaskAttachmentPicker? AttachmentPicker;
+    private readonly HashSet<Guid> RemovedAttachmentIds = [];
 
     protected override void OnInitialized()
     {
@@ -75,8 +107,19 @@
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
         if (TitleError.Length > 0) return;
         await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
-            Title.Trim(), Problem.Trim(), Details.Version, Priority, ProjectId, ExpectedResult.Trim()));
+            Title.Trim(), Problem.Trim(), Details.Version, Priority, ProjectId, ExpectedResult.Trim(),
+            AttachmentPicker?.GetUploads(), RemovedAttachmentIds.ToArray()));
     }
+
+    private void ToggleAttachmentRemoval(Guid attachmentId)
+    {
+        if (!RemovedAttachmentIds.Add(attachmentId))
+            RemovedAttachmentIds.Remove(attachmentId);
+    }
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:0.#} MB"
+        : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private Task Cancel() => CancelRequested.InvokeAsync();
     private Task HandleKeyDown(KeyboardEventArgs args) => args.Key == "Escape" ? Cancel() : Task.CompletedTask;

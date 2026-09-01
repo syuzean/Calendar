@@ -6,8 +6,9 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IDbContextFactory<CalendarDbContext> DbContextFactory
 
-<div class="dialog-backdrop" role="presentation" @onclick="Cancel">
-    <section class="event-dialog task-create-dialog" role="dialog" aria-modal="true"
+<div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Cancel">
+    <TaskModalInteraction BackdropId="@BackdropId" ModalId="@ModalId" ScrollRegionId="@ScrollRegionId" />
+    <section id="@ModalId" class="event-dialog task-modal task-create-dialog" role="dialog" aria-modal="true" tabindex="-1"
              aria-labelledby="task-create-dialog-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header">
             <div>
@@ -18,7 +19,8 @@
             <button class="icon-button" aria-label="Close create task dialog" type="button" @onclick="Cancel">×</button>
         </header>
 
-        <form @onsubmit="Submit" @onsubmit:preventDefault="true" @onclick="ClosePopovers">
+        <form class="task-modal-form" @onsubmit="Submit" @onsubmit:preventDefault="true" @onclick="ClosePopovers">
+            <div id="@ScrollRegionId" class="task-modal-scroll">
             @if (!string.IsNullOrWhiteSpace(ErrorMessage))
             {
                 <div class="auth-error">@ErrorMessage</div>
@@ -41,6 +43,11 @@
                     <span>Expected result <em>optional · Markdown</em></span>
                     <textarea rows="3" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
                 </label>
+            </div>
+
+            <div class="field task-attachments-field">
+                <span>Attachments <em>optional</em></span>
+                <TaskAttachmentPicker @ref="AttachmentPicker" />
             </div>
 
             <div class="task-field-grid">
@@ -119,6 +126,7 @@
 
             <TaskProjectPicker @ref="ProjectPicker" @bind-Value="SelectedProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
+            </div>
 
             <div class="dialog-actions task-dialog-actions">
                 <span class="action-spacer"></span>
@@ -135,6 +143,10 @@
     [Parameter] public string? ErrorMessage { get; set; }
 
     private readonly List<AssigneeOption> Assignees = [];
+    private readonly string ModalInstanceId = Guid.NewGuid().ToString("N");
+    private string BackdropId => $"task-create-backdrop-{ModalInstanceId}";
+    private string ModalId => $"task-create-modal-{ModalInstanceId}";
+    private string ScrollRegionId => $"task-create-scroll-{ModalInstanceId}";
     private string Title = string.Empty;
     private string Problem = string.Empty;
     private string ExpectedResult = string.Empty;
@@ -149,6 +161,7 @@
     private bool ShowAssigneePicker;
     private LumaDateOnlyPicker? DeadlinePicker;
     private TaskProjectPicker? ProjectPicker;
+    private TaskAttachmentPicker? AttachmentPicker;
 
     protected override async Task OnInitializedAsync()
     {
@@ -216,7 +229,8 @@
             Priority,
             SelectedInvitationEmail,
             SelectedProjectId,
-            ExpectedResult.Trim()));
+            ExpectedResult.Trim(),
+            AttachmentPicker?.GetUploads()));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();

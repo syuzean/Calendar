@@ -1,18 +1,5 @@
-.task-details-backdrop {
-    place-items: stretch end;
-    padding: 0;
-}
-
 .task-details-dialog {
-    display: flex;
-    flex-direction: column;
-    width: min(480px, 100%);
-    height: 100dvh;
-    max-height: none;
-    overflow-y: auto;
-    border-radius: 20px 0 0 20px;
-    padding: 27px;
-    animation: task-drawer-in .22s ease-out;
+    width: min(650px, 100%);
 }
 
 .task-details-header {
@@ -209,6 +196,215 @@
 .task-markdown ::deep pre code { background: transparent; padding: 0; color: inherit; }
 .task-markdown ::deep a { color: #6844dc; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 
+.task-attachment-gallery {
+    border: 1px solid #e8e3ed;
+    border-radius: 13px;
+    background: #fcfbfd;
+    padding: 14px;
+}
+
+.task-attachment-gallery > span {
+    color: #817989;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .55px;
+    text-transform: uppercase;
+}
+
+.task-attachment-gallery > div {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 9px;
+}
+
+.task-attachment-gallery button {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #e4dfe8;
+    border-radius: 10px;
+    background: #fff;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+    cursor: zoom-in;
+    transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+
+.task-attachment-gallery button:hover,
+.task-attachment-gallery button:focus-visible {
+    border-color: #bfaeea;
+    box-shadow: 0 7px 18px rgba(64, 43, 100, .1);
+    transform: translateY(-1px);
+}
+
+.task-attachment-gallery img {
+    display: block;
+    width: 100%;
+    height: 86px;
+    object-fit: cover;
+    background: #f0edf3;
+}
+
+.task-attachment-gallery button > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 7px; }
+.task-attachment-gallery strong { overflow: hidden; color: #4d4554; font-size: 7.8px; text-overflow: ellipsis; white-space: nowrap; }
+.task-attachment-gallery small { color: #9a919f; font-size: 6.8px; }
+
+.task-lightbox-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    display: grid;
+    place-items: center;
+    background: rgba(12, 10, 16, .88);
+    padding: 20px;
+    backdrop-filter: blur(7px);
+    overscroll-behavior: none;
+    touch-action: none;
+    animation: task-lightbox-fade .16s ease-out;
+}
+
+.task-lightbox-dialog {
+    width: min(740px, 100%);
+    height: min(70dvh, 590px);
+    max-height: calc(100dvh - 40px);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 18px;
+    background: #17141d;
+    color: #fff;
+    box-shadow: 0 28px 90px rgba(0,0,0,.55);
+    animation: task-lightbox-rise .18s ease-out;
+}
+
+.task-lightbox-header,
+.task-lightbox-footer {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 10px 13px;
+    background: rgba(25, 22, 31, .96);
+}
+
+.task-lightbox-header {
+    justify-content: space-between;
+    gap: 18px;
+    border-bottom: 1px solid rgba(255,255,255,.09);
+}
+
+.task-lightbox-header > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.task-lightbox-header span { color: #a995eb; font-size: 7px; font-weight: 800; letter-spacing: .9px; }
+.task-lightbox-header strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.task-lightbox-header small { color: #9d96a5; font-size: 7.5px; }
+.task-lightbox-header > button {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 9px;
+    background: rgba(255,255,255,.08);
+    color: #fff;
+    font-size: 21px;
+    cursor: pointer;
+}
+
+.task-lightbox-stage {
+    position: relative;
+    display: grid;
+    min-height: 0;
+    flex: 1 1 auto;
+    place-items: center;
+    overflow: hidden;
+    padding: 14px 52px;
+    background: radial-gradient(circle at center, #24202b 0, #141117 72%);
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+}
+
+.task-lightbox-stage > img {
+    position: absolute;
+    inset: 14px 52px;
+    display: block;
+    width: calc(100% - 104px);
+    height: calc(100% - 28px);
+    max-width: none;
+    max-height: none;
+    border-radius: 8px;
+    object-fit: contain;
+    box-shadow: 0 14px 45px rgba(0,0,0,.38);
+}
+
+.task-lightbox-stage.actual-size {
+    display: block;
+    overflow: auto;
+}
+
+.task-lightbox-stage.actual-size > img {
+    position: static;
+    width: auto;
+    height: auto;
+    max-width: none;
+    max-height: none;
+    margin: 0 auto;
+    object-fit: contain;
+}
+
+.task-lightbox-navigation {
+    position: absolute;
+    top: 50%;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 42px;
+    transform: translateY(-50%);
+    border: 1px solid rgba(255,255,255,.13);
+    border-radius: 12px;
+    background: rgba(20,17,25,.72);
+    color: #fff;
+    font-size: 29px;
+    cursor: pointer;
+    backdrop-filter: blur(5px);
+}
+
+.task-lightbox-navigation:hover { background: rgba(111,75,242,.68); }
+.task-lightbox-navigation.previous { left: 10px; }
+.task-lightbox-navigation.next { right: 10px; }
+
+.task-lightbox-footer {
+    justify-content: flex-end;
+    gap: 13px;
+    border-top: 1px solid rgba(255,255,255,.09);
+}
+
+.task-lightbox-footer span { color: #9d96a5; font-size: 8px; }
+.task-lightbox-footer a,
+.task-lightbox-footer button {
+    border: 0;
+    border-radius: 9px;
+    padding: 8px 12px;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 750;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.task-lightbox-footer button { background: rgba(255,255,255,.1); }
+.task-lightbox-footer button:hover { background: rgba(255,255,255,.16); }
+.task-lightbox-footer a { background: #7654ee; }
+.task-lightbox-footer a:hover { background: #6843e1; }
+
+@keyframes task-lightbox-fade { from { opacity: 0; } }
+@keyframes task-lightbox-rise { from { opacity: 0; transform: translateY(8px) scale(.985); } }
+
 .task-detail-status.unassigned {
     background: #f0edf4;
     color: #716879;
@@ -404,24 +600,20 @@
     to { transform: rotate(360deg); }
 }
 
-@keyframes task-drawer-in {
-    from { opacity: .8; transform: translateX(28px); }
-    to { opacity: 1; transform: none; }
-}
-
 @media (prefers-reduced-motion: reduce) {
     .task-details-dialog,
-    .task-details-loading span { animation: none; }
+    .task-details-loading span,
+    .task-lightbox-backdrop,
+    .task-lightbox-dialog { animation: none; }
 }
 
 @media (max-width: 520px) {
     .task-details-dialog {
         width: 100%;
-        border-radius: 0;
-        padding: 21px;
     }
 
     .task-structured-description { grid-template-columns: 1fr; }
+    .task-attachment-gallery > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
     .task-structured-description > article + article {
         border-top: 1px solid #e8e3ed;
@@ -433,4 +625,12 @@
     .task-detail-grid {
         grid-template-columns: 1fr;
     }
+
+    .task-lightbox-backdrop { padding: 10px; }
+    .task-lightbox-dialog { height: min(82dvh, 590px); max-height: calc(100dvh - 20px); border-radius: 14px; }
+    .task-lightbox-stage { padding: 11px 42px; }
+    .task-lightbox-stage > img { inset: 11px 42px; width: calc(100% - 84px); height: calc(100% - 22px); }
+    .task-lightbox-navigation { width: 31px; height: 39px; }
+    .task-lightbox-navigation.previous { left: 7px; }
+    .task-lightbox-navigation.next { right: 7px; }
 }

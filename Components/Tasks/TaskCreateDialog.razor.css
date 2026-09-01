@@ -1,6 +1,5 @@
 .task-create-dialog {
     width: min(650px, 100%);
-    overflow: visible;
 }
 
 .task-dialog-intro {
@@ -238,9 +237,7 @@
 
 @media (max-width: 680px) {
     .task-create-dialog {
-        max-height: calc(100dvh - 24px);
-        overflow-y: auto;
-        padding: 21px;
+        width: 100%;
     }
 
     .task-field-grid {

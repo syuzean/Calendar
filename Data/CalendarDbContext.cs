@@ -15,6 +15,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<TaskInvitation> TaskInvitations => Set<TaskInvitation>();
     public DbSet<LumaProject> Projects => Set<LumaProject>();
     public DbSet<InboxItem> InboxItems => Set<InboxItem>();
+    public DbSet<TaskAttachment> TaskAttachments => Set<TaskAttachment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -180,6 +181,24 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 .WithMany(task => task.InboxItems)
                 .HasForeignKey(item => item.TaskId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<TaskAttachment>(entity =>
+        {
+            entity.ToTable("TaskAttachments");
+            entity.Property(attachment => attachment.OriginalFileName).HasMaxLength(255);
+            entity.Property(attachment => attachment.ContentType).HasMaxLength(100);
+            entity.Property(attachment => attachment.StorageKey).HasMaxLength(200);
+            entity.HasIndex(attachment => attachment.StorageKey).IsUnique();
+            entity.HasIndex(attachment => new { attachment.TaskId, attachment.CreatedAt });
+            entity.HasOne(attachment => attachment.Task)
+                .WithMany(task => task.Attachments)
+                .HasForeignKey(attachment => attachment.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(attachment => attachment.UploadedByUser)
+                .WithMany(user => user.UploadedTaskAttachments)
+                .HasForeignKey(attachment => attachment.UploadedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

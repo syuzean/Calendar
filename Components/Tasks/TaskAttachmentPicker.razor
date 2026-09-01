@@ -1,0 +1,119 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using global::Calendar.Services
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div id="@ZoneId" class="task-attachment-picker" tabindex="0" @onclick:stopPropagation="true">
+    <InputFile id="@InputId" class="task-attachment-input" OnChange="FilesSelected" multiple
+               accept="image/png,image/jpeg,image/gif,image/webp" />
+    <div class="task-attachment-drop-copy">
+        <span class="task-attachment-drop-icon" aria-hidden="true">▧</span>
+        <div>
+            <strong>Add screenshots</strong>
+            <small>Choose, drop, or paste PNG, JPEG, GIF, or WebP · max 5 MB each</small>
+        </div>
+        <span class="task-attachment-browse">Choose files</span>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(ErrorMessage))
+{
+    <small class="task-attachment-error" role="alert">@ErrorMessage</small>
+}
+
+@if (SelectedFiles.Count > 0)
+{
+    <div class="task-attachment-selection" aria-label="Selected task images">
+        @for (var index = 0; index < SelectedFiles.Count; index++)
+        {
+            var selectedIndex = index;
+            var file = SelectedFiles[index];
+            <div>
+                <span aria-hidden="true">▧</span>
+                <span><strong>@file.Name</strong><small>@FormatSize(file.Size)</small></span>
+                <button type="button" aria-label="Remove @file.Name" @onclick="() => Remove(selectedIndex)">×</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly string componentId = Guid.NewGuid().ToString("N");
+    private readonly List<IBrowserFile> SelectedFiles = [];
+    private string ErrorMessage = string.Empty;
+    private bool initialized;
+    private string ZoneId => $"task-attachment-zone-{componentId}";
+    private string InputId => $"task-attachment-input-{componentId}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await JS.InvokeVoidAsync("lumaTaskAttachments.initialize", ZoneId, InputId);
+        initialized = true;
+    }
+
+    public IReadOnlyList<TaskAttachmentUpload> GetUploads() => SelectedFiles
+        .Select(file => new TaskAttachmentUpload(
+            file.Name,
+            file.ContentType,
+            file.Size,
+            () => file.OpenReadStream(TaskAttachmentRules.MaximumFileSizeBytes)))
+        .ToArray();
+
+    private void FilesSelected(InputFileChangeEventArgs args)
+    {
+        ErrorMessage = string.Empty;
+        IReadOnlyList<IBrowserFile> files;
+        try
+        {
+            files = args.GetMultipleFiles(TaskAttachmentRules.MaximumAttachmentCount);
+        }
+        catch (InvalidOperationException)
+        {
+            ErrorMessage = $"Choose no more than {TaskAttachmentRules.MaximumAttachmentCount} images.";
+            return;
+        }
+
+        foreach (var file in files)
+        {
+            if (SelectedFiles.Count >= TaskAttachmentRules.MaximumAttachmentCount)
+            {
+                ErrorMessage = $"Choose no more than {TaskAttachmentRules.MaximumAttachmentCount} images.";
+                break;
+            }
+            if (file.Size > TaskAttachmentRules.MaximumFileSizeBytes)
+            {
+                ErrorMessage = $"{file.Name} is larger than 5 MB.";
+                continue;
+            }
+            if (!IsSupportedType(file.ContentType))
+            {
+                ErrorMessage = $"{file.Name} is not a supported image.";
+                continue;
+            }
+
+            SelectedFiles.Add(file);
+        }
+    }
+
+    private void Remove(int index)
+    {
+        if (index < 0 || index >= SelectedFiles.Count) return;
+        SelectedFiles.RemoveAt(index);
+        ErrorMessage = string.Empty;
+    }
+
+    private static bool IsSupportedType(string contentType) => contentType is
+        "image/png" or "image/jpeg" or "image/gif" or "image/webp";
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:0.#} MB"
+        : $"{Math.Max(1, bytes / 1024d):0.#} KB";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!initialized) return;
+        try { await JS.InvokeVoidAsync("lumaTaskAttachments.dispose", ZoneId); }
+        catch (JSDisconnectedException) { }
+    }
+}

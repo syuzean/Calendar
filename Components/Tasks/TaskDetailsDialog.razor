@@ -2,8 +2,9 @@
 @using global::Calendar.Models
 @inject ITaskMarkdownRenderer MarkdownRenderer
 
-<div class="dialog-backdrop task-details-backdrop" role="presentation" @onclick="Close">
-    <section class="event-dialog task-details-dialog" role="dialog" aria-modal="true"
+<div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Close">
+    <TaskModalInteraction BackdropId="@BackdropId" ModalId="@ModalId" ScrollRegionId="@ScrollRegionId" />
+    <section id="@ModalId" class="event-dialog task-modal task-details-dialog" role="dialog" aria-modal="true" tabindex="-1"
              aria-labelledby="task-details-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header task-details-header">
             <div>
@@ -13,23 +14,24 @@
             <button class="icon-button" aria-label="Close task details" type="button" autofocus @onclick="Close">×</button>
         </header>
 
-        @if (IsLoading)
-        {
-            <div class="task-details-loading" role="status">
-                <span aria-hidden="true"></span>
-                <strong>Loading task details…</strong>
-            </div>
-        }
-        else if (!string.IsNullOrWhiteSpace(ErrorMessage))
-        {
-            <div class="task-details-error" role="alert">
-                <span aria-hidden="true">!</span>
-                <p>@ErrorMessage</p>
-            </div>
-        }
-        else if (Details is not null)
-        {
-            <div class="task-details-content">
+        <div id="@ScrollRegionId" class="task-modal-scroll">
+            @if (IsLoading)
+            {
+                <div class="task-details-loading" role="status">
+                    <span aria-hidden="true"></span>
+                    <strong>Loading task details…</strong>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+            {
+                <div class="task-details-error" role="alert">
+                    <span aria-hidden="true">!</span>
+                    <p>@ErrorMessage</p>
+                </div>
+            }
+            else if (Details is not null)
+            {
+                <div class="task-details-content">
                 <section class="task-description task-structured-description" aria-label="Task problem and expected result">
                     <article>
                         <span>Problem</span>
@@ -54,6 +56,26 @@
                         }
                     </article>
                 </section>
+
+                @if (Details.Attachments.Count > 0)
+                {
+                    <section class="task-attachment-gallery" aria-labelledby="task-attachments-heading">
+                        <span id="task-attachments-heading">Attachments · @Details.Attachments.Count</span>
+                        <div>
+                            @for (var index = 0; index < Details.Attachments.Count; index++)
+                            {
+                                var attachmentIndex = index;
+                                var attachment = Details.Attachments[index];
+                                <button type="button" title="Preview @attachment.FileName"
+                                        aria-label="Preview @attachment.FileName"
+                                        @onclick="() => OpenPreview(attachmentIndex)">
+                                    <img src="@attachment.Url" alt="@attachment.FileName" loading="lazy" />
+                                    <span><strong>@attachment.FileName</strong><small>@FormatSize(attachment.SizeBytes) · Preview</small></span>
+                                </button>
+                            }
+                        </div>
+                    </section>
+                }
 
                 <dl class="task-detail-grid">
                     <div>
@@ -121,17 +143,18 @@
                 {
                     <TaskCommentsSection TaskId="@Details.Id" />
                 }
-            </div>
-        }
+                </div>
+            }
 
-        @if (!string.IsNullOrWhiteSpace(ActionError))
-        {
-            <div class="task-action-error" role="alert">@ActionError</div>
-        }
-        @if (!string.IsNullOrWhiteSpace(NoticeMessage))
-        {
-            <div class="task-action-notice" role="status">@NoticeMessage</div>
-        }
+            @if (!string.IsNullOrWhiteSpace(ActionError))
+            {
+                <div class="task-action-error" role="alert">@ActionError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(NoticeMessage))
+            {
+                <div class="task-action-notice" role="status">@NoticeMessage</div>
+            }
+        </div>
 
         <div class="dialog-actions task-details-actions">
             @if (Details?.AssignmentStatus == TaskAssignmentStatus.Accepted)
@@ -197,6 +220,52 @@
             }
         </div>
     </section>
+
+    @if (PreviewAttachment is { } preview)
+    {
+        <div id="@PreviewBackdropId" class="task-lightbox-backdrop" role="presentation"
+             @onclick="ClosePreview" @onclick:stopPropagation="true">
+            <TaskModalInteraction BackdropId="@PreviewBackdropId" ModalId="@PreviewModalId"
+                                  ScrollRegionId="@PreviewScrollRegionId" />
+            <section id="@PreviewModalId" class="event-dialog task-modal task-lightbox-dialog"
+                     role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="task-lightbox-title"
+                     @onclick:stopPropagation="true" @onkeydown="HandlePreviewKeyDown">
+                <header class="task-lightbox-header">
+                    <div>
+                        <span>IMAGE PREVIEW</span>
+                        <strong id="task-lightbox-title">@preview.FileName</strong>
+                        @if (Details is { Attachments.Count: > 1 })
+                        {
+                            <small>@(PreviewIndex!.Value + 1) of @Details.Attachments.Count</small>
+                        }
+                    </div>
+                    <button type="button" autofocus aria-label="Close image preview" @onclick="ClosePreview">×</button>
+                </header>
+
+                <div id="@PreviewScrollRegionId" class="task-lightbox-stage @(PreviewActualSize ? "actual-size" : null)">
+                    @if (Details is { Attachments.Count: > 1 })
+                    {
+                        <button type="button" class="task-lightbox-navigation previous"
+                                aria-label="Previous image" @onclick="ShowPreviousPreview">‹</button>
+                    }
+                    <img src="@preview.Url" alt="@preview.FileName" />
+                    @if (Details is { Attachments.Count: > 1 })
+                    {
+                        <button type="button" class="task-lightbox-navigation next"
+                                aria-label="Next image" @onclick="ShowNextPreview">›</button>
+                    }
+                </div>
+
+                <footer class="task-lightbox-footer">
+                    <span>@FormatSize(preview.SizeBytes)</span>
+                    <button type="button" @onclick="TogglePreviewSize">
+                        @(PreviewActualSize ? "Fit to screen" : "View full size")
+                    </button>
+                    <a href="@preview.Url" download="@preview.FileName">Download</a>
+                </footer>
+            </section>
+        </div>
+    }
 </div>
 
 @code {
@@ -218,6 +287,20 @@
     [Parameter] public EventCallback<TaskWorkStatus> WorkStatusChangeRequested { get; set; }
     [Parameter] public EventCallback CloseRequested { get; set; }
 
+    private readonly string ModalInstanceId = Guid.NewGuid().ToString("N");
+    private string BackdropId => $"task-details-backdrop-{ModalInstanceId}";
+    private string ModalId => $"task-details-modal-{ModalInstanceId}";
+    private string ScrollRegionId => $"task-details-scroll-{ModalInstanceId}";
+    private string PreviewBackdropId => $"task-preview-backdrop-{ModalInstanceId}";
+    private string PreviewModalId => $"task-preview-modal-{ModalInstanceId}";
+    private string PreviewScrollRegionId => $"task-preview-scroll-{ModalInstanceId}";
+    private int? PreviewIndex;
+    private bool PreviewActualSize;
+    private TaskAttachmentDetails? PreviewAttachment =>
+        Details is not null && PreviewIndex is { } index && index >= 0 && index < Details.Attachments.Count
+            ? Details.Attachments[index]
+            : null;
+
     private Task Close() => CloseRequested.InvokeAsync();
     private Task Accept() => Details is null ? Task.CompletedTask : AcceptRequested.InvokeAsync(Details.Id);
     private Task Take() => Details is null ? Task.CompletedTask : TakeRequested.InvokeAsync(Details.Id);
@@ -227,6 +310,36 @@
     private Task Edit() => Details is null ? Task.CompletedTask : EditRequested.InvokeAsync(Details.Id);
     private Task StartWork() => WorkStatusChangeRequested.InvokeAsync(TaskWorkStatus.InProgress);
     private Task CompleteWork() => WorkStatusChangeRequested.InvokeAsync(TaskWorkStatus.Done);
+    private void OpenPreview(int index)
+    {
+        PreviewIndex = index;
+        PreviewActualSize = false;
+    }
+    private void ClosePreview()
+    {
+        PreviewIndex = null;
+        PreviewActualSize = false;
+    }
+    private void TogglePreviewSize() => PreviewActualSize = !PreviewActualSize;
+    private void ShowPreviousPreview()
+    {
+        if (Details is null || Details.Attachments.Count == 0 || PreviewIndex is null) return;
+        PreviewIndex = (PreviewIndex.Value - 1 + Details.Attachments.Count) % Details.Attachments.Count;
+        PreviewActualSize = false;
+    }
+    private void ShowNextPreview()
+    {
+        if (Details is null || Details.Attachments.Count == 0 || PreviewIndex is null) return;
+        PreviewIndex = (PreviewIndex.Value + 1) % Details.Attachments.Count;
+        PreviewActualSize = false;
+    }
+    private Task HandlePreviewKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") ClosePreview();
+        else if (args.Key == "ArrowLeft") ShowPreviousPreview();
+        else if (args.Key == "ArrowRight") ShowNextPreview();
+        return Task.CompletedTask;
+    }
     private Task HandleKeyDown(KeyboardEventArgs args) =>
         args.Key == "Escape" ? Close() : Task.CompletedTask;
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
@@ -262,4 +375,7 @@
     };
     private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
     private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:0.#} MB"
+        : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 }

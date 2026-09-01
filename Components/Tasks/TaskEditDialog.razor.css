@@ -1,6 +1,5 @@
 .task-edit-dialog {
-    width: min(570px, 100%);
-    overflow: visible;
+    width: min(650px, 100%);
 }
 
 .task-edit-dialog .dialog-header p {
@@ -30,12 +29,34 @@
     opacity: .62;
 }
 
+.task-existing-attachments > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.task-existing-attachments article {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    border: 1px solid #e7e1eb;
+    border-radius: 10px;
+    background: #fff;
+    padding: 6px;
+}
+
+.task-existing-attachments article.removed { border-color: #ead4d9; background: #fff8f9; opacity: .72; }
+.task-existing-attachments img { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; background: #f0edf3; }
+.task-existing-attachments article > span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.task-existing-attachments strong { overflow: hidden; color: #514858; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.task-existing-attachments small { color: #9b929f; font-size: 7px; }
+.task-existing-attachments button { border: 0; background: transparent; color: #9d4455; font-size: 7.5px; font-weight: 800; cursor: pointer; }
+.task-existing-attachments article.removed button { color: #6844dc; }
+
 @media (max-width: 620px) {
     .task-structured-fields { grid-template-columns: 1fr; }
+    .task-existing-attachments > div { grid-template-columns: 1fr; }
 
-    .task-edit-dialog {
-        max-height: calc(100dvh - 24px);
-        overflow-y: auto;
-        padding: 21px;
-    }
+    .task-edit-dialog { width: 100%; }
 }

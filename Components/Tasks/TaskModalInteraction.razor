@@ -1,0 +1,29 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@code {
+    [Parameter, EditorRequired] public string BackdropId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string ModalId { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string ScrollRegionId { get; set; } = string.Empty;
+
+    private bool initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await JS.InvokeVoidAsync("lumaTaskModal.initialize", BackdropId, ModalId, ScrollRegionId);
+        initialized = true;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!initialized) return;
+        try
+        {
+            await JS.InvokeVoidAsync("lumaTaskModal.dispose", BackdropId);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+}

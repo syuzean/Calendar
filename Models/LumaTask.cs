@@ -25,4 +25,5 @@ public sealed class LumaTask
     public TaskInvitation? Invitation { get; set; }
     public ICollection<LumaTaskComment> Comments { get; set; } = [];
     public ICollection<InboxItem> InboxItems { get; set; } = [];
+    public ICollection<TaskAttachment> Attachments { get; set; } = [];
 }

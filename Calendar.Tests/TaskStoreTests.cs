@@ -49,6 +49,132 @@ public sealed class TaskStoreTests
         Assert.Equal("- Reports arrive by Friday", task.ExpectedResult);
     }
 
+    [Fact]
+    public async Task CreateTask_SavesMultipleImageAttachmentsOutsideTaskRecord()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var uploads = new[]
+        {
+            ImageUpload("dashboard.png", "image/png", PngBytes(1, 2, 3)),
+            ImageUpload("failure.jpg", "image/jpeg", [0xFF, 0xD8, 0xFF, 0x01, 0x02])
+        };
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { Attachments = uploads });
+
+        await using var db = fixture.CreateDbContext();
+        var saved = await db.TaskAttachments.AsNoTracking()
+            .Where(attachment => attachment.TaskId == taskId)
+            .OrderBy(attachment => attachment.OriginalFileName)
+            .ToListAsync();
+        Assert.Equal(2, saved.Count);
+        Assert.All(saved, attachment =>
+        {
+            Assert.Equal(fixture.Creator.Id, attachment.UploadedByUserId);
+            Assert.NotEmpty(attachment.StorageKey);
+            Assert.True(attachment.SizeBytes > 0);
+        });
+        Assert.Equal(2, fixture.AttachmentStorage.Files.Count);
+
+        var details = await fixture.CreateStore(fixture.Assignee).LoadDetailsAsync(taskId);
+        Assert.Equal(2, details.Attachments.Count);
+        Assert.All(details.Attachments, attachment =>
+            Assert.Equal($"/task-attachments/{attachment.Id:D}", attachment.Url));
+    }
+
+    [Fact]
+    public async Task CreateTask_RejectsInvalidOrMismatchedImageContent()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+
+        await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Attachments = [ImageUpload("not-an-image.png", "image/png", "plain text"u8.ToArray())]
+            }));
+        await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Attachments = [ImageUpload("wrong.jpg", "image/jpeg", PngBytes())]
+            }));
+
+        await AssertNoTasksAsync(fixture);
+        Assert.Empty(fixture.AttachmentStorage.Files);
+    }
+
+    [Fact]
+    public async Task CreateTask_RejectsImageOverServerSizeLimit()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var oversized = ImageUpload(
+            "large.png",
+            "image/png",
+            PngBytes(),
+            TaskAttachmentRules.MaximumFileSizeBytes + 1);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(
+                NewRequest(fixture.Assignee.Id) with { Attachments = [oversized] }));
+
+        await AssertNoTasksAsync(fixture);
+        Assert.Empty(fixture.AttachmentStorage.Files);
+    }
+
+    [Fact]
+    public async Task Maker_CanAddAndRemoveTaskAttachments()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            Attachments = [ImageUpload("before.png", "image/png", PngBytes(1))]
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+
+        var updated = await store.UpdateContentAsync(taskId, new(
+            before.Title,
+            before.Problem,
+            before.Version,
+            before.Priority,
+            before.ProjectId,
+            before.ExpectedResult,
+            [ImageUpload("after.gif", "image/gif", "GIF89a-data"u8.ToArray())],
+            [before.Attachments.Single().Id]));
+
+        Assert.Single(updated.Attachments);
+        Assert.Equal("after.gif", updated.Attachments.Single().FileName);
+        Assert.Single(fixture.AttachmentStorage.Files);
+        await using var db = fixture.CreateDbContext();
+        Assert.Single(await db.TaskAttachments.Where(item => item.TaskId == taskId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task NonMaker_CannotRemoveTaskAttachment()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            Attachments = [ImageUpload("evidence.png", "image/png", PngBytes())]
+        });
+        var details = await fixture.CreateStore(fixture.Assignee).LoadDetailsAsync(taskId);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.CreateStore(fixture.Assignee).UpdateContentAsync(taskId, new(
+                details.Title,
+                details.Problem,
+                details.Version,
+                details.Priority,
+                details.ProjectId,
+                details.ExpectedResult,
+                RemovedAttachmentIds: [details.Attachments.Single().Id])));
+
+        Assert.Single(fixture.AttachmentStorage.Files);
+        await using var db = fixture.CreateDbContext();
+        Assert.Single(await db.TaskAttachments.Where(item => item.TaskId == taskId).ToListAsync());
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -386,6 +512,7 @@ public sealed class TaskStoreTests
             new AnonymousAuthenticationStateProvider(),
             fixture.Notifier,
             new TestTaskLinkBuilder(),
+            fixture.AttachmentStorage,
             NullLogger<TaskStore>.Instance);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.CreateAsync(NewRequest(fixture.Assignee.Id)));
@@ -2325,6 +2452,17 @@ public sealed class TaskStoreTests
         Assert.Null(item.ReadAt);
     }
 
+    private static TaskAttachmentUpload ImageUpload(
+        string fileName,
+        string contentType,
+        byte[] bytes,
+        long? declaredLength = null) =>
+        new(fileName, contentType, declaredLength ?? bytes.LongLength,
+            () => new MemoryStream(bytes, writable: false));
+
+    private static byte[] PngBytes(params byte[] payload) =>
+        [137, 80, 78, 71, 13, 10, 26, 10, .. payload];
+
     private static CreateLumaTaskRequest NewRequest(Guid assigneeId) => new(
         "  Prepare launch notes  ",
         "  Include the final checklist.  ",
@@ -2418,6 +2556,7 @@ public sealed class TaskStoreTests
         public AppUser Assignee { get; } = assignee;
         public AppUser Unrelated { get; } = unrelated;
         public RecordingTaskNotifier Notifier { get; } = new();
+        public RecordingTaskAttachmentStorage AttachmentStorage { get; } = new();
 
         public static async Task<TestFixture> CreateAsync()
         {
@@ -2441,6 +2580,7 @@ public sealed class TaskStoreTests
                 new TestAuthenticationStateProvider(user),
                 Notifier,
                 new TestTaskLinkBuilder(),
+                AttachmentStorage,
                 NullLogger<TaskStore>.Instance);
         public InboxStore CreateInboxStore(AppUser user) =>
             new(new TestDbContextFactory(Options), new TestAuthenticationStateProvider(user));
@@ -2482,6 +2622,41 @@ public sealed class TaskStoreTests
     {
         public string Task(Guid taskId) => $"https://luma.test/tasks?task={taskId:D}";
         public string Invitation(string token) => $"https://luma.test/task-invitation?token={Uri.EscapeDataString(token)}";
+    }
+
+    private sealed class RecordingTaskAttachmentStorage : ITaskAttachmentStorage
+    {
+        private readonly Dictionary<string, byte[]> files = new(StringComparer.Ordinal);
+
+        public IReadOnlyDictionary<string, byte[]> Files => files;
+
+        public async Task SaveAsync(
+            string storageKey,
+            Stream content,
+            CancellationToken cancellationToken = default)
+        {
+            await using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, cancellationToken);
+            files.Add(storageKey, buffer.ToArray());
+        }
+
+        public Task<Stream> OpenReadAsync(
+            string storageKey,
+            CancellationToken cancellationToken = default)
+        {
+            if (!files.TryGetValue(storageKey, out var content))
+                throw new FileNotFoundException("The attachment does not exist.", storageKey);
+
+            return Task.FromResult<Stream>(new MemoryStream(content, writable: false));
+        }
+
+        public Task DeleteAsync(
+            string storageKey,
+            CancellationToken cancellationToken = default)
+        {
+            files.Remove(storageKey);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingTaskNotifier : ITaskNotifier
