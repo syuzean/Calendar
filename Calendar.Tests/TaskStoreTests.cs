@@ -2042,8 +2042,8 @@ public sealed class TaskStoreTests
         await fixture.CreateStore(fixture.Creator).CreateAsync(NewEmailRequest("invited@example.com"));
         var store = fixture.CreateStore(fixture.Creator);
 
-        var unassignedTasks = await store.LoadRelatedAsync(new TaskListQuery(UnassignedOnly: true));
-        var assignedTasks = await store.LoadRelatedAsync(new TaskListQuery(AssigneeId: fixture.Assignee.Id));
+        var unassignedTasks = await store.LoadRelatedAsync(new TaskListQuery(IncludeUnassigned: true));
+        var assignedTasks = await store.LoadRelatedAsync(new TaskListQuery(AssigneeIds: [fixture.Assignee.Id]));
 
         Assert.Equal(unassigned.Id, Assert.Single(unassignedTasks).Id);
         Assert.Equal(assigned.Id, Assert.Single(assignedTasks).Id);
@@ -2064,20 +2064,22 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task NullableFilters_CombineWithOnlyMe()
+    public async Task AssigneeFilter_CombinesWithNullableDeadlineFilter()
     {
         var fixture = await TestFixture.CreateAsync();
         var expected = await SeedTaskAsync(
-            fixture, "Mine without assignment or deadline", unassigned: true, noDeadline: true);
+            fixture, "Assigned to me without deadline", creator: fixture.Assignee,
+            assignee: fixture.Creator, noDeadline: true);
         await SeedTaskAsync(
-            fixture, "Other unassigned task", creator: fixture.Assignee,
-            unassigned: true, noDeadline: true);
-        await SeedTaskAsync(fixture, "Mine with deadline", unassigned: true);
+            fixture, "Assigned to somebody else", creator: fixture.Assignee,
+            assignee: fixture.Unrelated, noDeadline: true);
+        await SeedTaskAsync(
+            fixture, "Assigned to me with deadline", creator: fixture.Assignee,
+            assignee: fixture.Creator);
 
         var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(new TaskListQuery(
-            Relation: TaskRelationFilter.OnlyMe,
             Deadline: TaskDeadlineFilter.NoDeadline,
-            UnassignedOnly: true));
+            AssigneeIds: [fixture.Creator.Id]));
 
         Assert.Equal(expected.Id, Assert.Single(tasks).Id);
     }
@@ -2272,89 +2274,80 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
-    public async Task OnlyMe_ReturnsCreatorOrAssigneeTasksAndExcludesOtherCompanyTasks()
+    public async Task MeAssigneeFilter_ReturnsOnlyTasksAssignedToCurrentUser()
     {
         var fixture = await TestFixture.CreateAsync();
-        var created = await SeedTaskAsync(fixture, "Created by me");
         var assigned = await SeedTaskAsync(
             fixture, "Assigned to me", creator: fixture.Assignee, assignee: fixture.Creator);
+        await SeedTaskAsync(fixture, "Created by me", assignee: fixture.Assignee);
         await SeedTaskAsync(
             fixture, "Other company task", creator: fixture.Assignee, assignee: fixture.Unrelated);
 
         var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
-            new(Relation: TaskRelationFilter.OnlyMe));
-
-        Assert.Equal(2, tasks.Count);
-        Assert.Contains(tasks, task => task.Id == created.Id);
-        Assert.Contains(tasks, task => task.Id == assigned.Id);
-        Assert.All(tasks, task => Assert.True(
-            task.IsCreatedByCurrentUser || task.IsAssignedToCurrentUser));
-    }
-
-    [Fact]
-    public async Task SelfAssignedTask_AppearsOnceAndMatchesBothRelationFilters()
-    {
-        var fixture = await TestFixture.CreateAsync();
-        var personal = await SeedTaskAsync(
-            fixture, "Personal", creator: fixture.Creator, assignee: fixture.Creator);
-        var store = fixture.CreateStore(fixture.Creator);
-
-        var all = await store.LoadRelatedAsync();
-        var assigned = await store.LoadRelatedAsync(new(Relation: TaskRelationFilter.AssignedToMe));
-        var created = await store.LoadRelatedAsync(new(Relation: TaskRelationFilter.AssignedByMe));
-
-        Assert.Equal(personal.Id, Assert.Single(all).Id);
-        Assert.Equal(personal.Id, Assert.Single(assigned).Id);
-        Assert.Equal(personal.Id, Assert.Single(created).Id);
-    }
-
-    [Fact]
-    public async Task AssignedToMeRelation_ReturnsOnlyAssignedTasks()
-    {
-        var fixture = await TestFixture.CreateAsync();
-        var assigned = await SeedTaskAsync(
-            fixture, "For me", creator: fixture.Assignee, assignee: fixture.Creator);
-        await SeedTaskAsync(fixture, "By me");
-
-        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
-            new(Relation: TaskRelationFilter.AssignedToMe));
+            new(AssigneeIds: [fixture.Creator.Id]));
 
         Assert.Equal(assigned.Id, Assert.Single(tasks).Id);
+        Assert.True(tasks[0].IsAssignedToCurrentUser);
     }
 
     [Fact]
-    public async Task AssignedByMeRelation_ReturnsOnlyCreatedTasks()
+    public async Task MultiAssigneeFilter_UsesOrLogicWithoutDuplicates()
     {
         var fixture = await TestFixture.CreateAsync();
+        var mine = await SeedTaskAsync(
+            fixture, "Mine", creator: fixture.Assignee, assignee: fixture.Creator);
+        var doers = await SeedTaskAsync(
+            fixture, "Assignee task", creator: fixture.Creator, assignee: fixture.Assignee);
         await SeedTaskAsync(
-            fixture, "For me", creator: fixture.Assignee, assignee: fixture.Creator);
-        var created = await SeedTaskAsync(fixture, "By me");
+            fixture, "Unrelated assignee", creator: fixture.Assignee, assignee: fixture.Unrelated);
+        var store = fixture.CreateStore(fixture.Creator);
 
-        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
-            new(Relation: TaskRelationFilter.AssignedByMe));
-
-        Assert.Equal(created.Id, Assert.Single(tasks).Id);
-    }
-
-    [Fact]
-    public async Task AllRelated_ReturnsBothRelationsWithoutDuplicates()
-    {
-        var fixture = await TestFixture.CreateAsync();
-        var assigned = await SeedTaskAsync(
-            fixture, "For me", creator: fixture.Assignee, assignee: fixture.Creator);
-        var created = await SeedTaskAsync(fixture, "By me");
-
-        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
-            new(Relation: TaskRelationFilter.AllRelated));
+        var tasks = await store.LoadRelatedAsync(new(
+            AssigneeIds: [fixture.Creator.Id, fixture.Assignee.Id, fixture.Creator.Id]));
 
         Assert.Equal(2, tasks.Count);
         Assert.Equal(2, tasks.Select(task => task.Id).Distinct().Count());
-        Assert.Contains(tasks, task => task.Id == assigned.Id);
-        Assert.Contains(tasks, task => task.Id == created.Id);
+        Assert.Contains(tasks, task => task.Id == mine.Id);
+        Assert.Contains(tasks, task => task.Id == doers.Id);
     }
 
     [Fact]
-    public async Task RelationFilter_CombinesWithPriorityAndWorkStatus()
+    public async Task Unassigned_CanBeCombinedWithSelectedAssignees()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var assigned = await SeedTaskAsync(
+            fixture, "For selected user", assignee: fixture.Assignee);
+        var unassigned = await SeedTaskAsync(fixture, "No assignee", unassigned: true);
+        await SeedTaskAsync(fixture, "Different assignee", assignee: fixture.Unrelated);
+        await fixture.CreateStore(fixture.Creator).CreateAsync(NewEmailRequest("invited-filter@example.com"));
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
+            new(AssigneeIds: [fixture.Assignee.Id], IncludeUnassigned: true));
+
+        Assert.Equal(2, tasks.Count);
+        Assert.Contains(tasks, task => task.Id == assigned.Id);
+        Assert.Contains(tasks, task => task.Id == unassigned.Id);
+        Assert.DoesNotContain(tasks, task => task.IsInvited);
+    }
+
+    [Fact]
+    public async Task EmptyAssigneeSelection_ReturnsAllCompanyTasks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var first = await SeedTaskAsync(fixture, "First", assignee: fixture.Assignee);
+        var second = await SeedTaskAsync(
+            fixture, "Second", creator: fixture.Assignee, assignee: fixture.Unrelated);
+
+        var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(
+            new(AssigneeIds: []));
+
+        Assert.Equal(2, tasks.Count);
+        Assert.Contains(tasks, task => task.Id == first.Id);
+        Assert.Contains(tasks, task => task.Id == second.Id);
+    }
+
+    [Fact]
+    public async Task MultiAssigneeFilter_CombinesWithPriorityAndWorkStatus()
     {
         var fixture = await TestFixture.CreateAsync();
         var expected = await SeedTaskAsync(
@@ -2380,7 +2373,7 @@ public sealed class TaskStoreTests
         var tasks = await fixture.CreateStore(fixture.Creator).LoadRelatedAsync(new(
             WorkStatus: TaskWorkStatus.InProgress,
             Priority: TaskPriority.High,
-            Relation: TaskRelationFilter.AssignedToMe));
+            AssigneeIds: [fixture.Creator.Id, fixture.Unrelated.Id]));
 
         Assert.Equal(expected.Id, Assert.Single(tasks).Id);
     }
@@ -2523,7 +2516,7 @@ public sealed class TaskStoreTests
         var tasks = await fixture.CreateStore(fixture.Unrelated).LoadProjectTasksAsync(selected.Id, new(
             Search: "LAUNCH", WorkStatus: TaskWorkStatus.InProgress,
             AssignmentStatus: TaskAssignmentStatus.Accepted, Priority: TaskPriority.High,
-            AssigneeId: fixture.Assignee.Id));
+            AssigneeIds: [fixture.Assignee.Id]));
 
         Assert.Equal(expected.Id, Assert.Single(tasks).Id);
     }

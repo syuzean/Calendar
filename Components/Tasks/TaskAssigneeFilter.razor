@@ -1,0 +1,122 @@
+@using global::Calendar.Services
+
+<div class="task-assignee-filter" @onclick:stopPropagation="true"
+     @onkeydown="HandleKeyDown" @onkeydown:stopPropagation="IsOpen">
+    <span>Assignee</span>
+    <button class="task-assignee-filter-trigger" type="button" aria-haspopup="listbox"
+            aria-expanded="@IsOpen" aria-controls="@MenuId" @onclick="Toggle">
+        <span class="task-assignee-filter-icon @(HasMeSelected ? "me" : null)" aria-hidden="true">
+            @(HasMeSelected ? "M" : "⌄")
+        </span>
+        <strong>@SelectionLabel</strong>
+        @if (SelectionCount > 1)
+        {
+            <small>@SelectionCount</small>
+        }
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+    </button>
+
+    @if (IsOpen)
+    {
+        <button class="task-assignee-filter-dismiss" type="button" tabindex="-1"
+                aria-label="Close assignee filter" @onclick="Close"></button>
+        <div id="@MenuId" class="task-assignee-filter-menu" role="listbox"
+             aria-label="Filter by assignee" aria-multiselectable="true">
+            <header>
+                <span>Filter by assignee</span>
+                @if (SelectionCount > 0)
+                {
+                    <button type="button" @onclick="ClearAsync">Clear</button>
+                }
+            </header>
+
+            @if (MeOption is { } me)
+            {
+                <button type="button" role="option" aria-selected="@IsSelected(me.Id)"
+                        class="task-assignee-filter-option me @(IsSelected(me.Id) ? "selected" : null)"
+                        @onclick="() => ToggleUserAsync(me.Id)">
+                    <span class="task-assignee-filter-avatar">M</span>
+                    <span><strong>Me</strong><small>@me.Name</small></span>
+                    <i aria-hidden="true">@(IsSelected(me.Id) ? "✓" : null)</i>
+                </button>
+            }
+
+            <button type="button" role="option" aria-selected="@Value.IncludeUnassigned"
+                    class="task-assignee-filter-option @(Value.IncludeUnassigned ? "selected" : null)"
+                    @onclick="ToggleUnassignedAsync">
+                <span class="task-assignee-filter-avatar unassigned">—</span>
+                <span><strong>Unassigned</strong><small>No registered assignee</small></span>
+                <i aria-hidden="true">@(Value.IncludeUnassigned ? "✓" : null)</i>
+            </button>
+
+            @if (OtherOptions.Count > 0)
+            {
+                <div class="task-assignee-filter-divider"><span>People</span></div>
+                <div class="task-assignee-filter-people">
+                    @foreach (var user in OtherOptions)
+                    {
+                        <button type="button" role="option" aria-selected="@IsSelected(user.Id)"
+                                class="task-assignee-filter-option @(IsSelected(user.Id) ? "selected" : null)"
+                                @onclick="() => ToggleUserAsync(user.Id)">
+                            <span class="task-assignee-filter-avatar">@InitialFor(user.Name)</span>
+                            <span><strong>@user.Name</strong></span>
+                            <i aria-hidden="true">@(IsSelected(user.Id) ? "✓" : null)</i>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<TaskAssigneeFilterOption> Options { get; set; } = [];
+    [Parameter] public TaskAssigneeFilterSelection Value { get; set; } = new([], false);
+    [Parameter] public EventCallback<TaskAssigneeFilterSelection> ValueChanged { get; set; }
+
+    private readonly string MenuId = $"task-assignee-filter-{Guid.NewGuid():N}";
+    private bool IsOpen;
+    private TaskAssigneeFilterOption? MeOption => Options.FirstOrDefault(option => option.IsCurrentUser);
+    private IReadOnlyList<TaskAssigneeFilterOption> OtherOptions => Options
+        .Where(option => !option.IsCurrentUser)
+        .OrderBy(option => option.Name)
+        .ToArray();
+    private int SelectionCount => Value.UserIds.Distinct().Count() + (Value.IncludeUnassigned ? 1 : 0);
+    private bool HasMeSelected => MeOption is { } me && IsSelected(me.Id);
+    private string SelectionLabel
+    {
+        get
+        {
+            if (SelectionCount == 0) return "All";
+            if (SelectionCount > 1) return "Multiple";
+            if (Value.IncludeUnassigned) return "Unassigned";
+            var selected = Options.FirstOrDefault(option => IsSelected(option.Id));
+            return selected?.IsCurrentUser == true ? "Me" : selected?.Name ?? "Assignee";
+        }
+    }
+
+    private bool IsSelected(Guid userId) => Value.UserIds.Contains(userId);
+    private void Toggle() => IsOpen = !IsOpen;
+    private void Close() => IsOpen = false;
+
+    private async Task ToggleUserAsync(Guid userId)
+    {
+        var selected = Value.UserIds.ToHashSet();
+        if (!selected.Add(userId)) selected.Remove(userId);
+        await ValueChanged.InvokeAsync(new TaskAssigneeFilterSelection(selected.ToArray(), Value.IncludeUnassigned));
+    }
+
+    private Task ToggleUnassignedAsync() => ValueChanged.InvokeAsync(
+        new TaskAssigneeFilterSelection(Value.UserIds.ToArray(), !Value.IncludeUnassigned));
+
+    private Task ClearAsync() => ValueChanged.InvokeAsync(new TaskAssigneeFilterSelection([], false));
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") Close();
+    }
+
+    private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
+        ? "?"
+        : char.ToUpperInvariant(name.Trim()[0]).ToString();
+}

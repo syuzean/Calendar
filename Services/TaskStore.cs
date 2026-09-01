@@ -72,15 +72,6 @@ public enum TaskSortOrder
     Newest
 }
 
-public enum TaskRelationFilter
-{
-    AllTasks,
-    OnlyMe,
-    AssignedToMe,
-    AssignedByMe,
-    AllRelated = AllTasks
-}
-
 public sealed record TaskListQuery(
     string? Search = null,
     TaskWorkStatus? WorkStatus = null,
@@ -88,10 +79,9 @@ public sealed record TaskListQuery(
     TaskPriority? Priority = null,
     TaskDeadlineFilter Deadline = TaskDeadlineFilter.All,
     TaskSortOrder Sort = TaskSortOrder.DeadlineNearest,
-    TaskRelationFilter Relation = TaskRelationFilter.AllTasks,
     Guid? ProjectId = null,
-    Guid? AssigneeId = null,
-    bool UnassignedOnly = false);
+    IReadOnlyCollection<Guid>? AssigneeIds = null,
+    bool IncludeUnassigned = false);
 
 public sealed record ChangeTaskWorkStatusRequest(
     TaskWorkStatus WorkStatus,
@@ -103,7 +93,10 @@ public sealed record AddTaskCommentRequest(
     string Text,
     IReadOnlyCollection<Guid>? MentionUserIds = null);
 
-public sealed record TaskAssigneeFilterOption(Guid Id, string Name);
+public sealed record TaskAssigneeFilterOption(Guid Id, string Name, bool IsCurrentUser);
+public sealed record TaskAssigneeFilterSelection(
+    IReadOnlyCollection<Guid> UserIds,
+    bool IncludeUnassigned);
 public sealed record TaskMentionUserOption(Guid Id, string Name, string Email);
 public sealed record TaskMentionDetails(Guid UserId, string UserName);
 
@@ -324,12 +317,15 @@ public sealed class TaskStore(
 
     public async Task<IReadOnlyList<TaskAssigneeFilterOption>> LoadAssigneeFilterOptionsAsync()
     {
-        _ = await GetCurrentUserIdAsync();
+        var currentUserId = await GetCurrentUserIdAsync();
         await using var db = await dbFactory.CreateDbContextAsync();
         return await db.Users.AsNoTracking()
             .OrderBy(user => user.Name)
             .ThenBy(user => user.Email)
-            .Select(user => new TaskAssigneeFilterOption(user.Id, user.Name))
+            .Select(user => new TaskAssigneeFilterOption(
+                user.Id,
+                user.Name,
+                user.Id == currentUserId))
             .ToListAsync();
     }
 
@@ -370,14 +366,6 @@ public sealed class TaskStore(
         var effectiveQuery = query ?? new TaskListQuery();
         await using var db = await dbFactory.CreateDbContextAsync();
         var tasks = db.Tasks.AsNoTracking();
-        tasks = effectiveQuery.Relation switch
-        {
-            TaskRelationFilter.OnlyMe => tasks.Where(task =>
-                task.CreatorId == currentUserId || task.AssigneeId == currentUserId),
-            TaskRelationFilter.AssignedToMe => tasks.Where(task => task.AssigneeId == currentUserId),
-            TaskRelationFilter.AssignedByMe => tasks.Where(task => task.CreatorId == currentUserId),
-            _ => tasks
-        };
         tasks = ApplyListFilters(tasks, effectiveQuery);
 
         return await ApplyListSort(tasks, effectiveQuery.Sort)
@@ -1544,9 +1532,18 @@ public sealed class TaskStore(
             tasks = tasks.Where(task => task.Priority == query.Priority.Value);
         if (query.ProjectId is not null)
             tasks = tasks.Where(task => task.ProjectId == query.ProjectId.Value);
-        if (query.AssigneeId is not null)
-            tasks = tasks.Where(task => task.AssigneeId == query.AssigneeId.Value);
-        else if (query.UnassignedOnly)
+        var assigneeIds = (query.AssigneeIds ?? [])
+            .Where(userId => userId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        if (assigneeIds.Length > 0 && query.IncludeUnassigned)
+            tasks = tasks.Where(task =>
+                (task.AssigneeId != null && assigneeIds.Contains(task.AssigneeId.Value)) ||
+                (task.AssigneeId == null && task.Invitation == null));
+        else if (assigneeIds.Length > 0)
+            tasks = tasks.Where(task =>
+                task.AssigneeId != null && assigneeIds.Contains(task.AssigneeId.Value));
+        else if (query.IncludeUnassigned)
             tasks = tasks.Where(task => task.AssigneeId == null && task.Invitation == null);
 
         var today = DateOnly.FromDateTime(DateTime.Today);

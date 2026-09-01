@@ -79,18 +79,8 @@
                             <input type="search" placeholder="Search tasks…" aria-label="Search tasks by title"
                                    @bind="SearchText" @bind:event="oninput" @bind:after="ApplyFiltersAsync" />
                         </label>
-                        <label><span>Relation</span><select @bind="RelationFilter" @bind:after="ApplyFiltersAsync">
-                            <option value="AllTasks">All Tasks</option>
-                            <option value="OnlyMe">Only Me</option>
-                        </select></label>
-                        <label><span>Assignee</span><select @bind="AssigneeFilter" @bind:after="ApplyFiltersAsync">
-                            <option value="">All</option>
-                            <option value="Unassigned">Unassigned</option>
-                            @foreach (var assignee in AssigneeOptions)
-                            {
-                                <option value="@assignee.Id">@assignee.Name</option>
-                            }
-                        </select></label>
+                        <TaskAssigneeFilter Options="@AssigneeOptions" Value="@AssigneeFilter"
+                                            ValueChanged="ApplyAssigneeFilterAsync" />
                         <label><span>Work</span><select @bind="WorkStatusFilter" @bind:after="ApplyFiltersAsync">
                             <option value="">All</option><option value="ToDo">To Do</option>
                             <option value="InProgress">In Progress</option><option value="Done">Done</option>
@@ -411,8 +401,7 @@
     private string WorkStatusFilter = string.Empty;
     private string AssignmentStatusFilter = string.Empty;
     private string PriorityFilter = string.Empty;
-    private string RelationFilter = nameof(TaskRelationFilter.AllTasks);
-    private string AssigneeFilter = string.Empty;
+    private TaskAssigneeFilterSelection AssigneeFilter = new([], false);
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
@@ -422,8 +411,8 @@
         WorkStatusFilter.Length > 0 ||
         AssignmentStatusFilter.Length > 0 ||
         PriorityFilter.Length > 0 ||
-        RelationFilter != nameof(TaskRelationFilter.AllTasks) ||
-        AssigneeFilter.Length > 0 ||
+        AssigneeFilter.UserIds.Count > 0 ||
+        AssigneeFilter.IncludeUnassigned ||
         DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
         SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
@@ -571,6 +560,12 @@
 
     private Task ApplyFiltersAsync() => LoadTasksAsync(showLoading: false);
 
+    private async Task ApplyAssigneeFilterAsync(TaskAssigneeFilterSelection selection)
+    {
+        AssigneeFilter = selection;
+        await LoadTasksAsync(showLoading: false);
+    }
+
     private async Task LoadAssigneeOptionsAsync()
     {
         try
@@ -589,8 +584,7 @@
         WorkStatusFilter = string.Empty;
         AssignmentStatusFilter = string.Empty;
         PriorityFilter = string.Empty;
-        RelationFilter = nameof(TaskRelationFilter.AllTasks);
-        AssigneeFilter = string.Empty;
+        AssigneeFilter = new TaskAssigneeFilterSelection([], false);
         DeadlineFilter = nameof(TaskDeadlineFilter.All);
         SortOrder = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(showLoading: false);
@@ -603,9 +597,8 @@
         Priority: ParseOptional<TaskPriority>(PriorityFilter),
         Deadline: Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
         Sort: Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
-        Relation: Enum.TryParse<TaskRelationFilter>(RelationFilter, out var relation) ? relation : TaskRelationFilter.AllTasks,
-        AssigneeId: Guid.TryParse(AssigneeFilter, out var assigneeId) ? assigneeId : null,
-        UnassignedOnly: AssigneeFilter == "Unassigned");
+        AssigneeIds: AssigneeFilter.UserIds,
+        IncludeUnassigned: AssigneeFilter.IncludeUnassigned);
 
     private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;

@@ -275,10 +275,9 @@
                 Priority: Parse<TaskPriority>(Priority),
                 Deadline: Enum.TryParse<TaskDeadlineFilter>(Deadline, out var deadline) ? deadline : TaskDeadlineFilter.All,
                 Sort: Enum.TryParse<TaskSortOrder>(Sort, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
-                Relation: TaskRelationFilter.AllTasks,
                 ProjectId: Details.Id,
-                AssigneeId: assigneeId,
-                UnassignedOnly: Assignee == "Unassigned"));
+                AssigneeIds: assigneeId is null ? [] : [assigneeId.Value],
+                IncludeUnassigned: Assignee == "Unassigned"));
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException) { TasksError = exception.Message; }
         finally { TasksLoading = false; }
