@@ -10,12 +10,27 @@ public sealed class TaskMarkdownRendererTests
     [Fact]
     public void RenderHtml_RendersCommonMarkdown()
     {
-        var html = renderer.RenderHtml("## Context\n\nUse **safe Markdown**.\n\n- First\n- Second\n\n`code`");
+        var html = renderer.RenderHtml(
+            "## Context\n\nUse **safe Markdown** with *emphasis*.\n\n" +
+            "- First\n- Second\n\n1. Ordered\n2. List\n\n" +
+            "[Open LUMA](https://luma.example/tasks)\n\n`inline code`\n\n```text\ncode block\n```");
 
         Assert.Contains("<h2>Context</h2>", html);
         Assert.Contains("<strong>safe Markdown</strong>", html);
+        Assert.Contains("<em>emphasis</em>", html);
         Assert.Contains("<ul>", html);
-        Assert.Contains("<code>code</code>", html);
+        Assert.Contains("<ol>", html);
+        Assert.Contains("href=\"https://luma.example/tasks\"", html);
+        Assert.Contains("<code>inline code</code>", html);
+        Assert.Contains("<pre><code>code block", html);
+    }
+
+    [Fact]
+    public void RenderHtml_RendersSingleNewlinesAsVisibleLineBreaks()
+    {
+        var html = renderer.RenderHtml("First line\nSecond line");
+
+        Assert.Matches("First line<br\\s*/?>\\s*Second line", html);
     }
 
     [Fact]
@@ -48,6 +63,19 @@ public sealed class TaskMarkdownRendererTests
         Assert.Contains("@Anna Smith", html);
         Assert.DoesNotContain("luma-user:", html);
         Assert.DoesNotContain("<a", html);
+    }
+
+    [Fact]
+    public void RenderHtml_HidesLegacyMentionIdentifiersFromRenderedDetails()
+    {
+        var userId = Guid.NewGuid();
+        var html = renderer.RenderHtml(
+            TaskMentionSyntax.CreateLegacyToken(userId, "Anna Smith"));
+
+        Assert.Contains("class=\"task-mention\"", html);
+        Assert.Contains("@Anna Smith", html);
+        Assert.DoesNotContain(userId.ToString(), html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("luma-user:", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

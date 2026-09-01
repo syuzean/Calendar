@@ -16,6 +16,7 @@ public sealed class TaskMarkdownRenderer : ITaskMarkdownRenderer
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .DisableHtml()
+        .UseSoftlineBreakAsHardlineBreak()
         .Build();
 
     private readonly HtmlSanitizer sanitizer;
