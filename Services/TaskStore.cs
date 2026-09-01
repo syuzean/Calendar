@@ -1262,20 +1262,26 @@ public sealed class TaskStore(
             .Distinct()
             .ToArray();
 
-        var users = requestedUserIds.Length == 0
-            ? new Dictionary<Guid, string>()
-            : await db.Users.AsNoTracking()
-                .Where(user => requestedUserIds.Contains(user.Id))
-                .ToDictionaryAsync(user => user.Id, user => user.Name);
-        if (users.Count != requestedUserIds.Length)
+        var users = await db.Users.AsNoTracking()
+            .Select(user => new { user.Id, user.Name })
+            .ToDictionaryAsync(user => user.Id, user => user.Name);
+        if (requestedUserIds.Any(userId => !users.ContainsKey(userId)))
             throw new ValidationException("One or more mentioned LUMA users no longer exist.");
 
         var canonicalDescription = TaskMentionSyntax.Canonicalize(trimmedDescription, users);
         if (canonicalDescription.Length > 10000)
             throw new ValidationException("Task description cannot exceed 10000 characters.");
 
+        var inferredUserIds = TaskMentionSyntax.FindUniqueVisibleMentionUserIds(
+            canonicalDescription,
+            users);
+        var resolvedUserIds = requestedUserIds
+            .Concat(inferredUserIds)
+            .Distinct()
+            .ToArray();
+
         var createdAt = DateTime.UtcNow;
-        var mentions = requestedUserIds
+        var mentions = resolvedUserIds
             .Where(userId => TaskMentionSyntax.ContainsVisibleMention(canonicalDescription, users[userId]))
             .Select(userId => new TaskMention
             {

@@ -3,30 +3,32 @@
 .task-mention-input-wrap textarea { width: 100%; resize: vertical; }
 
 .task-mention-menu {
-    position: absolute;
-    z-index: 24;
-    right: 8px;
-    bottom: 8px;
-    left: 8px;
+    position: fixed;
+    z-index: 140;
     overflow-y: auto;
-    max-height: 214px;
+    max-height: 168px;
+    overscroll-behavior: contain;
     border: 1px solid #e4ddec;
-    border-radius: 13px;
+    border-radius: 11px;
     background: #fff;
-    padding: 5px;
-    box-shadow: 0 16px 38px rgba(57, 39, 83, .18);
+    padding: 4px;
+    box-shadow: 0 12px 30px rgba(57, 39, 83, .16);
 }
+
+.task-mention-menu-above { transform: translateY(-100%); }
+.task-mention-menu-empty-state { padding: 2px; }
 
 .task-mention-menu button {
     display: grid;
     width: 100%;
-    grid-template-columns: 32px minmax(0, 1fr) auto;
+    min-height: 36px;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     border: 0;
-    border-radius: 9px;
+    border-radius: 8px;
     background: transparent;
-    padding: 7px 8px;
+    padding: 5px 7px;
     color: #4d4554;
     text-align: left;
     cursor: pointer;
@@ -37,20 +39,31 @@
 .task-mention-menu button > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .task-mention-menu strong,
 .task-mention-menu small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-mention-menu strong { font-size: 10px; }
-.task-mention-menu small { color: #968d9c; font-size: 8px; }
-.task-mention-menu i { color: #7654ee; font-size: 12px; font-style: normal; font-weight: 800; }
+.task-mention-menu strong { color: #403747; font-size: 11px; line-height: 1.2; }
+.task-mention-menu small { color: #968d9c; font-size: 9px; line-height: 1.2; }
+.task-mention-menu i { color: #a394cc; font-size: 10px; font-style: normal; font-weight: 700; }
 
 .task-mention-avatar {
     display: grid;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     place-items: center;
-    border-radius: 10px;
+    border-radius: 8px;
     background: #eee9ff;
     color: #6e49e5;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 800;
 }
 
-.task-mention-empty { display: block; padding: 12px; color: #948b9b; font-size: 9px; text-align: center; }
+.task-mention-empty {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 7px;
+    color: #817887;
+    font-size: 9px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.task-mention-empty i { color: #b68738; font-size: 9px; font-style: normal; }

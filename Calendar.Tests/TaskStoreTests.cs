@@ -73,6 +73,74 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task CreateTask_ResolvesUniqueVisibleMentionFromPastedText()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Description = "Please check this @Unrelated User"
+            });
+
+        await using var db = fixture.CreateDbContext();
+        var mention = Assert.Single(await db.TaskMentions
+            .Where(item => item.TaskId == taskId)
+            .ToListAsync());
+        Assert.Equal(fixture.Unrelated.Id, mention.UserId);
+        var notification = Assert.Single(await db.InboxItems
+            .Where(item => item.TaskId == taskId && item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+        Assert.Equal(fixture.Unrelated.Id, notification.RecipientUserId);
+    }
+
+    [Fact]
+    public async Task CreateTask_DoesNotResolveAmbiguousPastedMention()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Users.AddRange(
+                TestFixture.NewUser("tigran.one@luma.test", "Tigran Hakobyan"),
+                TestFixture.NewUser("tigran.two@luma.test", "Tigran Hakobyan"));
+            await db.SaveChangesAsync();
+        }
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Description = "Please check this @Tigran Hakobyan"
+            });
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.Empty(await verify.TaskMentions.Where(item => item.TaskId == taskId).ToListAsync());
+        Assert.Empty(await verify.InboxItems
+            .Where(item => item.TaskId == taskId && item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+        Assert.Contains("@Tigran Hakobyan", (await verify.Tasks.SingleAsync(item => item.Id == taskId)).Description);
+    }
+
+    [Fact]
+    public async Task EditTask_ResolvesUniqueVisibleMentionFromEditedText()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new(
+            before.Title,
+            "Edited with @Unrelated User",
+            before.Version));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(fixture.Unrelated.Id, (await db.TaskMentions.SingleAsync(item => item.TaskId == taskId)).UserId);
+        Assert.Single(await db.InboxItems
+            .Where(item => item.TaskId == taskId && item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+    }
+
+    [Fact]
     public async Task CreateTask_RejectsMentionOfUnknownUser()
     {
         var fixture = await TestFixture.CreateAsync();

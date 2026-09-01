@@ -11,10 +11,11 @@
                   @onkeydown:stopPropagation="ShowSuggestions"></textarea>
         @if (ShowSuggestions)
         {
-            <div class="task-mention-menu" role="listbox" aria-label="Mention a LUMA user">
+            <div class="task-mention-menu @(Context?.PlaceAbove == true ? "task-mention-menu-above" : null) @(FilteredUsers.Count == 0 ? "task-mention-menu-empty-state" : null)"
+                 style="@PopoverStyle" role="listbox" aria-label="Mention a LUMA user">
                 @if (FilteredUsers.Count == 0)
                 {
-                    <span class="task-mention-empty">No matching LUMA users</span>
+                    <span class="task-mention-empty"><i aria-hidden="true">⚠</i> No matching LUMA users</span>
                 }
                 else
                 {
@@ -47,16 +48,20 @@
     private MentionContext? Context;
     private bool ShowSuggestions;
 
+    private string PopoverStyle => Context is null
+        ? string.Empty
+        : FormattableString.Invariant(
+            $"left:{Context.Left}px;top:{Context.Top}px;width:{Math.Min(Context.Width, FilteredUsers.Count == 0 ? 176 : Context.Width)}px;max-height:{Context.MaxHeight}px;");
+
     private IReadOnlyList<TaskMentionUserOption> FilteredUsers
     {
         get
         {
             var query = Context?.Query?.Trim() ?? string.Empty;
             return Users
-                .Where(user => query.Length == 0 ||
-                    user.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                .Where(user => user.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                     user.Email.Contains(query, StringComparison.OrdinalIgnoreCase))
-                .Take(6)
+                .Take(20)
                 .ToArray();
         }
     }
@@ -68,12 +73,15 @@
         var retainedMentionIds = MentionUserIds
             .Where(userId => Users.FirstOrDefault(user => user.Id == userId) is { } user &&
                              TaskMentionSyntax.ContainsVisibleMention(Value, user.Name))
+            .Concat(TaskMentionSyntax.FindUniqueVisibleMentionUserIds(
+                Value,
+                Users.Select(user => new KeyValuePair<Guid, string>(user.Id, user.Name))))
             .Distinct()
             .ToArray();
         if (!MentionUserIds.Order().SequenceEqual(retainedMentionIds.Order()))
             await MentionUserIdsChanged.InvokeAsync(retainedMentionIds);
         Context = await JS.InvokeAsync<MentionContext?>("lumaTaskMentions.getContext", TextArea);
-        ShowSuggestions = Context is not null;
+        ShowSuggestions = !string.IsNullOrWhiteSpace(Context?.Query);
     }
 
     private async Task SelectUserAsync(TaskMentionUserOption user)
@@ -110,5 +118,10 @@
         public int Start { get; set; }
         public int End { get; set; }
         public string Query { get; set; } = string.Empty;
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Width { get; set; }
+        public double MaxHeight { get; set; }
+        public bool PlaceAbove { get; set; }
     }
 }
