@@ -9,4 +9,5 @@ public sealed class LumaTaskComment
     public DateTime CreatedAt { get; set; }
     public LumaTask? Task { get; set; }
     public AppUser? Author { get; set; }
+    public ICollection<TaskCommentMention> Mentions { get; set; } = [];
 }

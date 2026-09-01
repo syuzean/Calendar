@@ -44,9 +44,9 @@
         </div>
 
         <form class="comment-composer" @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
-            <label for="task-comment-input">Write a comment</label>
-            <textarea id="task-comment-input" rows="3" maxlength="2000"
-                      placeholder="Write a comment…" @bind="CommentText" @bind:event="oninput"></textarea>
+            <TaskMentionEditor Label="Write a comment" HelpText="@@mentions" Rows="3" MaxLength="2000"
+                               Compact="true" Placeholder="Write a comment…" Users="@MentionUsers"
+                               @bind-Value="CommentText" @bind-MentionUserIds="CommentMentionUserIds" />
             <div class="comment-composer-footer">
                 <span>@CommentText.Length / 2000</span>
                 <button class="primary-button" type="submit" disabled="@IsSubmitting">
@@ -70,8 +70,10 @@
     [Parameter, EditorRequired] public Guid TaskId { get; set; }
 
     private readonly List<LumaTaskCommentDetails> Comments = [];
+    private IReadOnlyList<TaskMentionUserOption> MentionUsers = [];
     private Guid LoadedTaskId;
     private string CommentText = string.Empty;
+    private IReadOnlyCollection<Guid> CommentMentionUserIds = [];
     private string LoadError = string.Empty;
     private string ActionError = string.Empty;
     private string NoticeMessage = string.Empty;
@@ -93,6 +95,7 @@
         try
         {
             Comments.AddRange(await TaskStore.LoadCommentsAsync(TaskId));
+            MentionUsers = await TaskStore.LoadMentionUsersAsync();
         }
         catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException)
         {
@@ -111,9 +114,12 @@
         IsSubmitting = true;
         try
         {
-            var comment = await TaskStore.AddCommentAsync(TaskId, new AddTaskCommentRequest(CommentText));
+            var comment = await TaskStore.AddCommentAsync(
+                TaskId,
+                new AddTaskCommentRequest(CommentText, CommentMentionUserIds));
             Comments.Add(comment);
             CommentText = string.Empty;
+            CommentMentionUserIds = [];
             NoticeMessage = TaskStore.LastNotice ?? string.Empty;
         }
         catch (Exception exception) when (exception is LumaTaskNotFoundException or UnauthorizedAccessException or ValidationException)

@@ -121,6 +121,27 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task CreateTask_KeepsUnknownPastedMentionAsPlainText()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Description = "Please check this @Person Who Does Not Exist"
+            });
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.TaskMentions.Where(item => item.TaskId == taskId).ToListAsync());
+        Assert.Empty(await db.InboxItems
+            .Where(item => item.TaskId == taskId && item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+        Assert.Contains(
+            "@Person Who Does Not Exist",
+            (await db.Tasks.SingleAsync(item => item.Id == taskId)).Description);
+    }
+
+    [Fact]
     public async Task EditTask_ResolvesUniqueVisibleMentionFromEditedText()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -1681,6 +1702,104 @@ public sealed class TaskStoreTests
 
         Assert.Equal(fixture.Assignee.Id, comment.AuthorUserId);
         Assert.Equal("I will review it today.", comment.Text);
+    }
+
+    [Fact]
+    public async Task CommentMention_PersistsUserRelationshipAndCreatesInboxNotification()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var visibleMention = TaskMentionSyntax.CreateVisibleMention(fixture.Unrelated.Name);
+
+        var comment = await store.AddCommentAsync(
+            taskId,
+            new($"Please review this, {visibleMention}.", [fixture.Unrelated.Id]));
+
+        Assert.Contains("@Unrelated User", comment.Text);
+        Assert.DoesNotContain("luma-user:", comment.Text);
+        Assert.DoesNotContain(fixture.Unrelated.Id.ToString(), comment.Text);
+        await using var db = fixture.CreateDbContext();
+        var mention = Assert.Single(await db.TaskCommentMentions.ToListAsync());
+        Assert.Equal(comment.Id, mention.CommentId);
+        Assert.Equal(fixture.Unrelated.Id, mention.UserId);
+        var inboxItem = Assert.Single(await db.InboxItems
+            .Where(item => item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+        AssertInbox(inboxItem, InboxActivityType.TaskMentioned, fixture.Creator, fixture.Unrelated, taskId);
+        Assert.Empty(fixture.Notifier.CommentNotifications);
+    }
+
+    [Fact]
+    public async Task Comment_ResolvesUniqueVisibleMentionFromPastedText()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        await fixture.CreateStore(fixture.Assignee).AddCommentAsync(
+            taskId,
+            new("Pasted mention for @Unrelated User"));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(fixture.Unrelated.Id, (await db.TaskCommentMentions.SingleAsync()).UserId);
+        var notification = Assert.Single(await db.InboxItems
+            .Where(item => item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync());
+        Assert.Equal(fixture.Assignee.Id, notification.ActorUserId);
+        Assert.Equal(fixture.Unrelated.Id, notification.RecipientUserId);
+        Assert.Equal(taskId, notification.TaskId);
+    }
+
+    [Fact]
+    public async Task Comment_KeepsAmbiguousOrUnknownPastedMentionsAsPlainText()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Users.AddRange(
+                TestFixture.NewUser("alex.one@luma.test", "Alex Smith"),
+                TestFixture.NewUser("alex.two@luma.test", "Alex Smith"));
+            await db.SaveChangesAsync();
+        }
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        var comment = await store.AddCommentAsync(
+            taskId,
+            new("Ask @Alex Smith and @Person Who Does Not Exist"));
+
+        Assert.Contains("@Alex Smith", comment.Text);
+        Assert.Contains("@Person Who Does Not Exist", comment.Text);
+        await using var verify = fixture.CreateDbContext();
+        Assert.Empty(await verify.TaskCommentMentions.ToListAsync());
+        Assert.DoesNotContain(await verify.InboxItems.ToListAsync(),
+            item => item.ActivityType == InboxActivityType.TaskMentioned);
+    }
+
+    [Fact]
+    public async Task CommentMentions_DoNotNotifyActorOrDuplicateOtherPartyNotification()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+
+        await store.AddCommentAsync(
+            taskId,
+            new(
+                $"{TaskMentionSyntax.CreateVisibleMention(fixture.Creator.Name)} " +
+                $"{TaskMentionSyntax.CreateVisibleMention(fixture.Assignee.Name)}",
+                [fixture.Creator.Id, fixture.Assignee.Id, fixture.Assignee.Id]));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(2, await db.TaskCommentMentions.CountAsync());
+        var commentItems = await db.InboxItems
+            .Where(item => item.ActivityType == InboxActivityType.CommentAdded ||
+                           item.ActivityType == InboxActivityType.TaskMentioned)
+            .ToListAsync();
+        var notification = Assert.Single(commentItems);
+        Assert.Equal(InboxActivityType.TaskMentioned, notification.ActivityType);
+        Assert.Equal(fixture.Assignee.Id, notification.RecipientUserId);
+        Assert.DoesNotContain(commentItems, item => item.RecipientUserId == fixture.Creator.Id);
     }
 
     [Fact]

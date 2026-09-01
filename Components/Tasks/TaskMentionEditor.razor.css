@@ -2,6 +2,38 @@
 .task-mention-input-wrap { position: relative; }
 .task-mention-input-wrap textarea { width: 100%; resize: vertical; }
 
+.task-mention-editor-compact > span {
+    display: block;
+    margin-bottom: 5px;
+    color: #817989;
+    font-size: 7px;
+    font-weight: 800;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+}
+
+.task-mention-editor-compact > span em {
+    color: #a198a8;
+    font-size: 7px;
+    font-style: normal;
+    font-weight: 650;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.task-mention-editor-compact .task-mention-input-wrap textarea {
+    min-height: 64px;
+    resize: vertical;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    padding: 0;
+    color: #39333f;
+    font: inherit;
+    font-size: 9.5px;
+    line-height: 1.5;
+}
+
 .task-mention-menu {
     position: fixed;
     z-index: 140;

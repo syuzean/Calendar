@@ -1,13 +1,13 @@
 @using global::Calendar.Services
 @inject IJSRuntime JS
 
-<div class="field task-mention-editor" @onclick:stopPropagation="true">
-    <span>@Label <em>optional · Markdown · @@mentions</em></span>
+<div class="field task-mention-editor @(Compact ? "task-mention-editor-compact" : null)" @onclick:stopPropagation="true">
+    <span>@Label @if (!string.IsNullOrWhiteSpace(HelpText)) { <em>@HelpText</em> }</span>
     <div class="task-mention-input-wrap">
-        <textarea @ref="TextArea" rows="@Rows" maxlength="10000" value="@Value"
+        <textarea @ref="TextArea" rows="@Rows" maxlength="@MaxLength" value="@Value"
                   placeholder="@Placeholder" aria-label="@Label"
                   aria-autocomplete="list" aria-expanded="@ShowSuggestions"
-                  @oninput="HandleInputAsync" @onkeydown="HandleKeyDown"
+                  @oninput="HandleInputAsync" @onkeydown="HandleKeyDown" @onblur="HideSuggestions"
                   @onkeydown:stopPropagation="ShowSuggestions"></textarea>
         @if (ShowSuggestions)
         {
@@ -21,8 +21,10 @@
                 {
                     @foreach (var user in FilteredUsers)
                     {
-                        <button type="button" role="option" @onmousedown:preventDefault="true"
-                                @onclick="() => SelectUserAsync(user)">
+                        <button type="button" role="option"
+                                @onpointerdown="() => SelectUserAsync(user)"
+                                @onpointerdown:preventDefault="true"
+                                @onpointerdown:stopPropagation="true">
                             <span class="task-mention-avatar" aria-hidden="true">@InitialFor(user.Name)</span>
                             <span><strong>@user.Name</strong><small>@user.Email</small></span>
                             <i aria-hidden="true">@@</i>
@@ -38,6 +40,9 @@
     [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
     [Parameter] public string Placeholder { get; set; } = string.Empty;
     [Parameter] public int Rows { get; set; } = 4;
+    [Parameter] public int MaxLength { get; set; } = 10000;
+    [Parameter] public string HelpText { get; set; } = "optional · Markdown · @mentions";
+    [Parameter] public bool Compact { get; set; }
     [Parameter] public string Value { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public IReadOnlyCollection<Guid> MentionUserIds { get; set; } = [];
@@ -81,7 +86,7 @@
         if (!MentionUserIds.Order().SequenceEqual(retainedMentionIds.Order()))
             await MentionUserIdsChanged.InvokeAsync(retainedMentionIds);
         Context = await JS.InvokeAsync<MentionContext?>("lumaTaskMentions.getContext", TextArea);
-        ShowSuggestions = !string.IsNullOrWhiteSpace(Context?.Query);
+        ShowSuggestions = Context is not null;
     }
 
     private async Task SelectUserAsync(TaskMentionUserOption user)
@@ -103,10 +108,13 @@
     private void HandleKeyDown(KeyboardEventArgs args)
     {
         if (args.Key == "Escape")
-        {
-            Context = null;
-            ShowSuggestions = false;
-        }
+            HideSuggestions();
+    }
+
+    private void HideSuggestions()
+    {
+        Context = null;
+        ShowSuggestions = false;
     }
 
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)

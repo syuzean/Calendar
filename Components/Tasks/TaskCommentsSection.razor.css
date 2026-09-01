@@ -122,29 +122,6 @@
     box-shadow: 0 0 0 3px rgba(111, 75, 242, .09);
 }
 
-.comment-composer label {
-    display: block;
-    margin-bottom: 5px;
-    color: #817989;
-    font-size: 7px;
-    font-weight: 800;
-    letter-spacing: .4px;
-    text-transform: uppercase;
-}
-
-.comment-composer textarea {
-    width: 100%;
-    min-height: 64px;
-    resize: vertical;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: #39333f;
-    font: inherit;
-    font-size: 9.5px;
-    line-height: 1.5;
-}
-
 .comment-composer-footer {
     display: flex;
     align-items: center;

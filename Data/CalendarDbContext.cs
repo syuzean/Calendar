@@ -17,6 +17,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<InboxItem> InboxItems => Set<InboxItem>();
     public DbSet<TaskAttachment> TaskAttachments => Set<TaskAttachment>();
     public DbSet<TaskMention> TaskMentions => Set<TaskMention>();
+    public DbSet<TaskCommentMention> TaskCommentMentions => Set<TaskCommentMention>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -212,6 +213,21 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(mention => mention.User)
                 .WithMany(user => user.TaskMentions)
+                .HasForeignKey(mention => mention.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<TaskCommentMention>(entity =>
+        {
+            entity.ToTable("TaskCommentMentions");
+            entity.HasKey(mention => new { mention.CommentId, mention.UserId });
+            entity.HasIndex(mention => mention.UserId);
+            entity.HasOne(mention => mention.Comment)
+                .WithMany(comment => comment.Mentions)
+                .HasForeignKey(mention => mention.CommentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(mention => mention.User)
+                .WithMany(user => user.TaskCommentMentions)
                 .HasForeignKey(mention => mention.UserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });

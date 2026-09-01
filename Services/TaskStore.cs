@@ -99,7 +99,9 @@ public sealed record ChangeTaskWorkStatusRequest(
 
 public sealed record TakeLumaTaskRequest(Guid Version);
 
-public sealed record AddTaskCommentRequest(string Text);
+public sealed record AddTaskCommentRequest(
+    string Text,
+    IReadOnlyCollection<Guid>? MentionUserIds = null);
 
 public sealed record TaskAssigneeFilterOption(Guid Id, string Name);
 public sealed record TaskMentionUserOption(Guid Id, string Name, string Email);
@@ -294,7 +296,12 @@ public sealed class TaskStore(
             doer?.Id,
             InboxActivityType.TaskAssigned,
             $"{maker.Name} assigned “{entity.Title}” to you.");
-        QueueMentionInboxItems(db, entity, creatorId, maker.Name, resolvedMentions.Mentions.Select(item => item.UserId));
+        QueueMentionInboxItems(
+            db,
+            entity,
+            creatorId,
+            $"{maker.Name} mentioned you in “{entity.Title}”.",
+            resolvedMentions.Mentions.Select(item => item.UserId));
         var storedAttachments = await StoreAttachmentsAsync(
             entity.Id, creatorId, request.Attachments, 0, 0);
         foreach (var attachment in storedAttachments)
@@ -809,7 +816,12 @@ public sealed class TaskStore(
             task.AssigneeId,
             InboxActivityType.TaskUpdated,
             $"{task.Creator!.Name} updated “{task.Title}”.");
-        QueueMentionInboxItems(db, task, currentUserId, task.Creator!.Name, newlyMentionedUserIds);
+        QueueMentionInboxItems(
+            db,
+            task,
+            currentUserId,
+            $"{task.Creator!.Name} mentioned you in “{task.Title}”.",
+            newlyMentionedUserIds);
         try
         {
             await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
@@ -902,30 +914,55 @@ public sealed class TaskStore(
         var task = await LoadTaskForActionAsync(db, taskId);
         EnsureTaskAccess(task.CreatorId, task.AssigneeId, currentUserId);
         var author = currentUserId == task.CreatorId ? task.Creator! : task.Assignee!;
+        var resolvedMentions = await ResolveVisibleMentionsAsync(
+            db,
+            text,
+            request.MentionUserIds,
+            2000,
+            "Task comments cannot exceed 2000 characters.");
         var comment = new LumaTaskComment
         {
             Id = Guid.NewGuid(),
             TaskId = task.Id,
             AuthorUserId = currentUserId,
-            Text = text,
+            Text = resolvedMentions.Text,
             CreatedAt = DateTime.UtcNow
         };
+        foreach (var userId in resolvedMentions.UserIds)
+        {
+            comment.Mentions.Add(new TaskCommentMention
+            {
+                CommentId = comment.Id,
+                UserId = userId,
+                CreatedAt = comment.CreatedAt
+            });
+        }
 
         db.TaskComments.Add(comment);
-        QueueInboxItem(
+        var otherPartyId = currentUserId == task.CreatorId ? task.AssigneeId : task.CreatorId;
+        if (otherPartyId is null || !resolvedMentions.UserIds.Contains(otherPartyId.Value))
+        {
+            QueueInboxItem(
+                db,
+                task,
+                currentUserId,
+                otherPartyId,
+                InboxActivityType.CommentAdded,
+                $"{author.Name} commented on “{task.Title}”.");
+        }
+        QueueMentionInboxItems(
             db,
             task,
             currentUserId,
-            currentUserId == task.CreatorId ? task.AssigneeId : task.CreatorId,
-            InboxActivityType.CommentAdded,
-            $"{author.Name} commented on “{task.Title}”.");
+            $"{author.Name} mentioned you in a comment on “{task.Title}” — {PreviewComment(resolvedMentions.Text)}",
+            resolvedMentions.UserIds);
         await db.SaveChangesAsync();
         return new LumaTaskCommentDetails(
             comment.Id,
             comment.TaskId,
             comment.AuthorUserId,
             author.Name,
-            comment.Text,
+            resolvedMentions.Text,
             comment.CreatedAt);
     }
 
@@ -1234,7 +1271,7 @@ public sealed class TaskStore(
         CalendarDbContext db,
         LumaTask task,
         Guid actorUserId,
-        string actorName,
+        string message,
         IEnumerable<Guid> mentionedUserIds)
     {
         foreach (var userId in mentionedUserIds.Distinct())
@@ -1245,7 +1282,7 @@ public sealed class TaskStore(
                 actorUserId,
                 userId,
                 InboxActivityType.TaskMentioned,
-                $"{actorName} mentioned you in “{task.Title}”.");
+                message);
         }
     }
 
@@ -1254,9 +1291,34 @@ public sealed class TaskStore(
         string? description,
         IReadOnlyCollection<Guid>? descriptionMentionUserIds)
     {
-        var trimmedDescription = description?.Trim() ?? string.Empty;
-        var legacyMentions = TaskMentionSyntax.Parse(trimmedDescription);
-        var requestedUserIds = (descriptionMentionUserIds ?? [])
+        var resolved = await ResolveVisibleMentionsAsync(
+            db,
+            description,
+            descriptionMentionUserIds,
+            10000,
+            "Task description cannot exceed 10000 characters.");
+        var createdAt = DateTime.UtcNow;
+        var mentions = resolved.UserIds
+            .Select(userId => new TaskMention
+            {
+                UserId = userId,
+                CreatedAt = createdAt
+            })
+            .ToArray();
+
+        return new ResolvedTaskMentions(resolved.Text, mentions);
+    }
+
+    private static async Task<ResolvedVisibleMentions> ResolveVisibleMentionsAsync(
+        CalendarDbContext db,
+        string? text,
+        IReadOnlyCollection<Guid>? selectedUserIds,
+        int maximumLength,
+        string maximumLengthMessage)
+    {
+        var trimmedText = text?.Trim() ?? string.Empty;
+        var legacyMentions = TaskMentionSyntax.Parse(trimmedText);
+        var requestedUserIds = (selectedUserIds ?? [])
             .Concat(legacyMentions.Select(mention => mention.UserId))
             .Where(userId => userId != Guid.Empty)
             .Distinct()
@@ -1268,29 +1330,18 @@ public sealed class TaskStore(
         if (requestedUserIds.Any(userId => !users.ContainsKey(userId)))
             throw new ValidationException("One or more mentioned LUMA users no longer exist.");
 
-        var canonicalDescription = TaskMentionSyntax.Canonicalize(trimmedDescription, users);
-        if (canonicalDescription.Length > 10000)
-            throw new ValidationException("Task description cannot exceed 10000 characters.");
+        var canonicalText = TaskMentionSyntax.Canonicalize(trimmedText, users);
+        if (canonicalText.Length > maximumLength)
+            throw new ValidationException(maximumLengthMessage);
 
-        var inferredUserIds = TaskMentionSyntax.FindUniqueVisibleMentionUserIds(
-            canonicalDescription,
-            users);
+        var inferredUserIds = TaskMentionSyntax.FindUniqueVisibleMentionUserIds(canonicalText, users);
         var resolvedUserIds = requestedUserIds
             .Concat(inferredUserIds)
             .Distinct()
+            .Where(userId => TaskMentionSyntax.ContainsVisibleMention(canonicalText, users[userId]))
             .ToArray();
 
-        var createdAt = DateTime.UtcNow;
-        var mentions = resolvedUserIds
-            .Where(userId => TaskMentionSyntax.ContainsVisibleMention(canonicalDescription, users[userId]))
-            .Select(userId => new TaskMention
-            {
-                UserId = userId,
-                CreatedAt = createdAt
-            })
-            .ToArray();
-
-        return new ResolvedTaskMentions(canonicalDescription, mentions);
+        return new ResolvedVisibleMentions(canonicalText, resolvedUserIds);
     }
 
     private static string WorkStatusName(TaskWorkStatus status) => status switch
@@ -1551,6 +1602,12 @@ public sealed class TaskStore(
         return value;
     }
 
+    private static string PreviewComment(string text)
+    {
+        var singleLine = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return singleLine.Length <= 120 ? singleLine : $"{singleLine[..117]}…";
+    }
+
     private static string NormalizeEmail(string email) => email.Trim().ToUpperInvariant();
 
     private static bool IsValidEmail(string email) =>
@@ -1563,6 +1620,9 @@ public sealed class TaskStore(
     private sealed record ResolvedTaskMentions(
         string Description,
         IReadOnlyList<TaskMention> Mentions);
+    private sealed record ResolvedVisibleMentions(
+        string Text,
+        IReadOnlyList<Guid> UserIds);
     private sealed record DeadlineRequestSnapshot(
         DateOnly CurrentDeadline,
         DateOnly RequestedDeadline,
