@@ -32,27 +32,18 @@
             else if (Details is not null)
             {
                 <div class="task-details-content">
-                <section class="task-description task-structured-description" aria-label="Task problem and expected result">
+                <section class="task-description task-structured-description" aria-label="Task description">
                     <article>
-                        <span>Problem</span>
-                        @if (string.IsNullOrWhiteSpace(Details.Problem))
+                        <span>Description</span>
+                        @if (string.IsNullOrWhiteSpace(Details.Description))
                         {
-                            <p class="empty">No problem provided.</p>
+                            <p class="empty">No description provided.</p>
                         }
                         else
                         {
-                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(Details.Problem))</div>
-                        }
-                    </article>
-                    <article>
-                        <span>Expected result</span>
-                        @if (string.IsNullOrWhiteSpace(Details.ExpectedResult))
-                        {
-                            <p class="empty">No expected result provided.</p>
-                        }
-                        else
-                        {
-                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(Details.ExpectedResult))</div>
+                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(
+                                Details.Description,
+                                Details.Mentions.Select(mention => mention.UserName).ToArray()))</div>
                         }
                     </article>
                 </section>

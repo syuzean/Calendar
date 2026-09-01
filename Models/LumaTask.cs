@@ -4,8 +4,7 @@ public sealed class LumaTask
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Title { get; set; } = string.Empty;
-    public string Problem { get; set; } = string.Empty;
-    public string ExpectedResult { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public Guid CreatorId { get; set; }
     public Guid? AssigneeId { get; set; }
     public Guid? ProjectId { get; set; }
@@ -26,4 +25,5 @@ public sealed class LumaTask
     public ICollection<LumaTaskComment> Comments { get; set; } = [];
     public ICollection<InboxItem> InboxItems { get; set; } = [];
     public ICollection<TaskAttachment> Attachments { get; set; } = [];
+    public ICollection<TaskMention> Mentions { get; set; } = [];
 }

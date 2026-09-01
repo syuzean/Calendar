@@ -20,4 +20,5 @@ public sealed class AppUser
     public ICollection<InboxItem> ReceivedInboxItems { get; set; } = [];
     public ICollection<InboxItem> AuthoredInboxItems { get; set; } = [];
     public ICollection<TaskAttachment> UploadedTaskAttachments { get; set; } = [];
+    public ICollection<TaskMention> TaskMentions { get; set; } = [];
 }

@@ -10,14 +10,14 @@ namespace Calendar.Services;
 
 public sealed record CreateLumaTaskRequest(
     string Title,
-    string? Problem,
+    string? Description,
     Guid? AssigneeId,
     DateOnly? Deadline,
     TaskPriority Priority = TaskPriority.None,
     string? AssigneeEmail = null,
     Guid? ProjectId = null,
-    string? ExpectedResult = null,
-    IReadOnlyList<TaskAttachmentUpload>? Attachments = null);
+    IReadOnlyList<TaskAttachmentUpload>? Attachments = null,
+    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null);
 
 public sealed record RequestTaskDeadlineChange(
     DateOnly? ProposedDeadline,
@@ -25,13 +25,13 @@ public sealed record RequestTaskDeadlineChange(
 
 public sealed record UpdateLumaTaskContentRequest(
     string Title,
-    string? Problem,
+    string? Description,
     Guid Version,
     TaskPriority? Priority = null,
     Guid? ProjectId = null,
-    string? ExpectedResult = null,
     IReadOnlyList<TaskAttachmentUpload>? NewAttachments = null,
-    IReadOnlyCollection<Guid>? RemovedAttachmentIds = null);
+    IReadOnlyCollection<Guid>? RemovedAttachmentIds = null,
+    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null);
 
 public sealed record TaskAttachmentUpload(
     string FileName,
@@ -102,6 +102,8 @@ public sealed record TakeLumaTaskRequest(Guid Version);
 public sealed record AddTaskCommentRequest(string Text);
 
 public sealed record TaskAssigneeFilterOption(Guid Id, string Name);
+public sealed record TaskMentionUserOption(Guid Id, string Name, string Email);
+public sealed record TaskMentionDetails(Guid UserId, string UserName);
 
 public sealed record LumaTaskCommentDetails(
     Guid Id,
@@ -155,8 +157,7 @@ public sealed record RelatedLumaTask(
 public sealed record LumaTaskDetails(
     Guid Id,
     string Title,
-    string Problem,
-    string ExpectedResult,
+    string Description,
     string CreatorName,
     string AssigneeName,
     bool IsInvited,
@@ -178,7 +179,8 @@ public sealed record LumaTaskDetails(
     bool CanManageWorkStatus,
     bool CanComment,
     bool CanTake,
-    IReadOnlyList<TaskAttachmentDetails> Attachments);
+    IReadOnlyList<TaskAttachmentDetails> Attachments,
+    IReadOnlyList<TaskMentionDetails> Mentions);
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -237,12 +239,16 @@ public sealed class TaskStore(
                 .SingleOrDefaultAsync();
         }
 
+        var resolvedMentions = await ResolveMentionsAsync(
+            db,
+            request.Description,
+            request.DescriptionMentionUserIds);
+
         var entity = new LumaTask
         {
             Id = Guid.NewGuid(),
             Title = request.Title.Trim(),
-            Problem = request.Problem?.Trim() ?? string.Empty,
-            ExpectedResult = request.ExpectedResult?.Trim() ?? string.Empty,
+            Description = resolvedMentions.Description,
             CreatorId = creatorId,
             AssigneeId = doer?.Id,
             ProjectId = request.ProjectId,
@@ -255,6 +261,11 @@ public sealed class TaskStore(
             AcceptedAt = null,
             Version = Guid.NewGuid()
         };
+        foreach (var mention in resolvedMentions.Mentions)
+        {
+            mention.TaskId = entity.Id;
+            entity.Mentions.Add(mention);
+        }
 
         db.Tasks.Add(entity);
         string? invitationToken = null;
@@ -283,6 +294,7 @@ public sealed class TaskStore(
             doer?.Id,
             InboxActivityType.TaskAssigned,
             $"{maker.Name} assigned “{entity.Title}” to you.");
+        QueueMentionInboxItems(db, entity, creatorId, maker.Name, resolvedMentions.Mentions.Select(item => item.UserId));
         var storedAttachments = await StoreAttachmentsAsync(
             entity.Id, creatorId, request.Attachments, 0, 0);
         foreach (var attachment in storedAttachments)
@@ -311,6 +323,17 @@ public sealed class TaskStore(
             .OrderBy(user => user.Name)
             .ThenBy(user => user.Email)
             .Select(user => new TaskAssigneeFilterOption(user.Id, user.Name))
+            .ToListAsync();
+    }
+
+    public async Task<IReadOnlyList<TaskMentionUserOption>> LoadMentionUsersAsync()
+    {
+        _ = await GetCurrentUserIdAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        return await db.Users.AsNoTracking()
+            .OrderBy(user => user.Name)
+            .ThenBy(user => user.Email)
+            .Select(user => new TaskMentionUserOption(user.Id, user.Name, user.Email))
             .ToListAsync();
     }
 
@@ -445,8 +468,7 @@ public sealed class TaskStore(
                 item.AssigneeId,
                 item.Id,
                 item.Title,
-                item.Problem,
-                item.ExpectedResult,
+                item.Description,
                 CreatorName = item.Creator!.Name,
                 AssigneeName = item.Assignee != null
                     ? item.Assignee.Name
@@ -466,6 +488,11 @@ public sealed class TaskStore(
                 item.DeadlineChangeComment,
                 item.DeadlineChangeRequestedAt,
                 item.Version,
+                Mentions = item.Mentions
+                    .Select(mention => new TaskMentionDetails(
+                        mention.UserId,
+                        mention.User!.Name))
+                    .ToList(),
                 Attachments = item.Attachments
                     .OrderBy(attachment => attachment.CreatedAt)
                     .Select(attachment => new TaskAttachmentDetails(
@@ -483,8 +510,7 @@ public sealed class TaskStore(
         return new LumaTaskDetails(
             task.Id,
             task.Title,
-            task.Problem,
-            task.ExpectedResult,
+            TaskMentionSyntax.Canonicalize(task.Description, task.Mentions.ToDictionary(item => item.UserId, item => item.UserName)),
             task.CreatorName,
             task.AssigneeName,
             task.IsInvited,
@@ -506,7 +532,8 @@ public sealed class TaskStore(
             task.AssigneeId == currentUserId,
             task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
             task.AssigneeId is null && !task.HasInvitation,
-            task.Attachments);
+            task.Attachments,
+            task.Mentions);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -518,6 +545,9 @@ public sealed class TaskStore(
             .Include(item => item.Creator)
             .Include(item => item.Assignee)
             .Include(item => item.Project)
+            .Include(item => item.Attachments)
+            .Include(item => item.Mentions)
+                .ThenInclude(mention => mention.User)
             .SingleOrDefaultAsync(item => item.Id == taskId)
             ?? throw new LumaTaskNotFoundException();
 
@@ -695,8 +725,13 @@ public sealed class TaskStore(
         EnsureCurrentVersion(task, request.Version);
 
         var title = request.Title.Trim();
-        var problem = request.Problem?.Trim() ?? string.Empty;
-        var expectedResult = request.ExpectedResult?.Trim() ?? string.Empty;
+        var resolvedMentions = await ResolveMentionsAsync(
+            db,
+            request.Description,
+            request.DescriptionMentionUserIds ?? task.Mentions
+                .Select(mention => mention.UserId)
+                .ToArray());
+        var description = resolvedMentions.Description;
         var priority = request.Priority ?? task.Priority;
         LumaProject? updatedProject = null;
         if (request.ProjectId is { } projectId)
@@ -705,10 +740,22 @@ public sealed class TaskStore(
                 ?? throw new ValidationException("Choose an existing LUMA project.");
         }
         var titleChanged = !string.Equals(task.Title, title, StringComparison.Ordinal);
-        var problemChanged = !string.Equals(task.Problem, problem, StringComparison.Ordinal);
-        var expectedResultChanged = !string.Equals(task.ExpectedResult, expectedResult, StringComparison.Ordinal);
+        var descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
         var priorityChanged = task.Priority != priority;
         var projectChanged = task.ProjectId != request.ProjectId;
+        var existingMentionKeys = task.Mentions
+            .Select(mention => mention.UserId)
+            .ToHashSet();
+        var updatedMentionKeys = resolvedMentions.Mentions
+            .Select(mention => mention.UserId)
+            .ToHashSet();
+        var mentionsChanged = !existingMentionKeys.SetEquals(updatedMentionKeys);
+        var existingMentionedUserIds = task.Mentions.Select(mention => mention.UserId).ToHashSet();
+        var newlyMentionedUserIds = resolvedMentions.Mentions
+            .Select(mention => mention.UserId)
+            .Distinct()
+            .Where(userId => !existingMentionedUserIds.Contains(userId))
+            .ToArray();
         var removedIds = (request.RemovedAttachmentIds ?? [])
             .Where(id => id != Guid.Empty)
             .Distinct()
@@ -725,12 +772,11 @@ public sealed class TaskStore(
         var storedAttachments = await StoreAttachmentsAsync(
             task.Id, currentUserId, request.NewAttachments, remainingCount, remainingSize);
         var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0;
-        if (!titleChanged && !problemChanged && !expectedResultChanged && !priorityChanged && !projectChanged && !attachmentsChanged)
+        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !attachmentsChanged && !mentionsChanged)
             return ToDetails(task, currentUserId);
 
         task.Title = title;
-        task.Problem = problem;
-        task.ExpectedResult = expectedResult;
+        task.Description = description;
         task.Priority = priority;
         task.ProjectId = request.ProjectId;
         task.Project = updatedProject;
@@ -739,6 +785,22 @@ public sealed class TaskStore(
         foreach (var attachment in removedAttachments)
             task.Attachments.Remove(attachment);
         db.TaskAttachments.AddRange(storedAttachments);
+        if (mentionsChanged)
+        {
+            var removedMentions = task.Mentions
+                .Where(mention => !updatedMentionKeys.Contains(mention.UserId))
+                .ToArray();
+            db.TaskMentions.RemoveRange(removedMentions);
+            foreach (var mention in removedMentions)
+                task.Mentions.Remove(mention);
+
+            foreach (var mention in resolvedMentions.Mentions
+                         .Where(mention => !existingMentionKeys.Contains(mention.UserId)))
+            {
+                mention.TaskId = task.Id;
+                task.Mentions.Add(mention);
+            }
+        }
 
         QueueInboxItem(
             db,
@@ -747,6 +809,7 @@ public sealed class TaskStore(
             task.AssigneeId,
             InboxActivityType.TaskUpdated,
             $"{task.Creator!.Name} updated “{task.Title}”.");
+        QueueMentionInboxItems(db, task, currentUserId, task.Creator!.Name, newlyMentionedUserIds);
         try
         {
             await SaveActionAsync(db, "The task changed before your edits could be saved. Reopen it and try again.");
@@ -1017,14 +1080,7 @@ public sealed class TaskStore(
     private static TaskUser User(AppUser user) => new(user.Id, user.Name, user.Email);
 
     private static string StructuredTaskSummary(LumaTask task)
-    {
-        var sections = new List<string>();
-        if (!string.IsNullOrWhiteSpace(task.Problem))
-            sections.Add($"Problem\n{task.Problem}");
-        if (!string.IsNullOrWhiteSpace(task.ExpectedResult))
-            sections.Add($"Expected result\n{task.ExpectedResult}");
-        return string.Join("\n\n", sections);
-    }
+        => task.Description;
 
     private async Task<IReadOnlyList<TaskAttachment>> StoreAttachmentsAsync(
         Guid taskId,
@@ -1174,6 +1230,63 @@ public sealed class TaskStore(
         });
     }
 
+    private static void QueueMentionInboxItems(
+        CalendarDbContext db,
+        LumaTask task,
+        Guid actorUserId,
+        string actorName,
+        IEnumerable<Guid> mentionedUserIds)
+    {
+        foreach (var userId in mentionedUserIds.Distinct())
+        {
+            QueueInboxItem(
+                db,
+                task,
+                actorUserId,
+                userId,
+                InboxActivityType.TaskMentioned,
+                $"{actorName} mentioned you in “{task.Title}”.");
+        }
+    }
+
+    private static async Task<ResolvedTaskMentions> ResolveMentionsAsync(
+        CalendarDbContext db,
+        string? description,
+        IReadOnlyCollection<Guid>? descriptionMentionUserIds)
+    {
+        var trimmedDescription = description?.Trim() ?? string.Empty;
+        var legacyMentions = TaskMentionSyntax.Parse(trimmedDescription);
+        var requestedUserIds = (descriptionMentionUserIds ?? [])
+            .Concat(legacyMentions.Select(mention => mention.UserId))
+            .Where(userId => userId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+
+        var users = requestedUserIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Users.AsNoTracking()
+                .Where(user => requestedUserIds.Contains(user.Id))
+                .ToDictionaryAsync(user => user.Id, user => user.Name);
+        if (users.Count != requestedUserIds.Length)
+            throw new ValidationException("One or more mentioned LUMA users no longer exist.");
+
+        var canonicalDescription = TaskMentionSyntax.Canonicalize(trimmedDescription, users);
+        if (canonicalDescription.Length > 10000)
+            throw new ValidationException("Task description cannot exceed 10000 characters.");
+
+        var createdAt = DateTime.UtcNow;
+        var mentions = requestedUserIds
+            .Where(userId => TaskMentionSyntax.ContainsVisibleMention(canonicalDescription, users[userId]))
+            .Select(userId => new TaskMention
+            {
+                UserId = userId,
+                CreatedAt = createdAt
+            })
+            .ToArray();
+
+        return new ResolvedTaskMentions(canonicalDescription, mentions);
+    }
+
     private static string WorkStatusName(TaskWorkStatus status) => status switch
     {
         TaskWorkStatus.InProgress => "In Progress",
@@ -1188,6 +1301,8 @@ public sealed class TaskStore(
             .Include(item => item.Invitation)
             .Include(item => item.Project)
             .Include(item => item.Attachments)
+            .Include(item => item.Mentions)
+                .ThenInclude(mention => mention.User)
             .SingleOrDefaultAsync(item => item.Id == taskId)
         ?? throw new LumaTaskNotFoundException();
 
@@ -1225,41 +1340,52 @@ public sealed class TaskStore(
         task.DeadlineChangeRequestedAt = null;
     }
 
-    private static LumaTaskDetails ToDetails(LumaTask task, Guid currentUserId) => new(
-        task.Id,
-        task.Title,
-        task.Problem,
-        task.ExpectedResult,
-        task.Creator!.Name,
-        task.Assignee?.Name ?? task.Invitation?.RecipientEmail ?? "Unassigned",
-        task.AssigneeId is null && task.Invitation?.Status == TaskInvitationStatus.Pending,
-        task.ProjectId,
-        task.Project?.Name ?? string.Empty,
-        task.Deadline,
-        task.CreatedAt,
-        task.AssignmentStatus,
-        task.WorkStatus,
-        task.Priority,
-        task.AcceptedAt,
-        task.RequestedDeadline,
-        task.DeadlineChangeComment ?? string.Empty,
-        task.DeadlineChangeRequestedAt,
-        task.Version,
-        task.AssigneeId == currentUserId,
-        task.CreatorId == currentUserId,
-        task.CreatorId == currentUserId,
-        task.AssigneeId == currentUserId,
-        task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
-        task.AssigneeId is null && task.Invitation is null,
-        task.Attachments
-            .OrderBy(attachment => attachment.CreatedAt)
-            .Select(attachment => new TaskAttachmentDetails(
-                attachment.Id,
-                attachment.OriginalFileName,
-                attachment.ContentType,
-                attachment.SizeBytes,
-                attachment.CreatedAt))
-            .ToArray());
+    private static LumaTaskDetails ToDetails(LumaTask task, Guid currentUserId)
+    {
+        var mentions = task.Mentions
+            .Select(mention => new TaskMentionDetails(
+                mention.UserId,
+                mention.User?.Name ?? "LUMA user"))
+            .ToArray();
+        var mentionNames = mentions.GroupBy(item => item.UserId)
+            .ToDictionary(group => group.Key, group => group.First().UserName);
+
+        return new LumaTaskDetails(
+            task.Id,
+            task.Title,
+            TaskMentionSyntax.Canonicalize(task.Description, mentionNames),
+            task.Creator!.Name,
+            task.Assignee?.Name ?? task.Invitation?.RecipientEmail ?? "Unassigned",
+            task.AssigneeId is null && task.Invitation?.Status == TaskInvitationStatus.Pending,
+            task.ProjectId,
+            task.Project?.Name ?? string.Empty,
+            task.Deadline,
+            task.CreatedAt,
+            task.AssignmentStatus,
+            task.WorkStatus,
+            task.Priority,
+            task.AcceptedAt,
+            task.RequestedDeadline,
+            task.DeadlineChangeComment ?? string.Empty,
+            task.DeadlineChangeRequestedAt,
+            task.Version,
+            task.AssigneeId == currentUserId,
+            task.CreatorId == currentUserId,
+            task.CreatorId == currentUserId,
+            task.AssigneeId == currentUserId,
+            task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
+            task.AssigneeId is null && task.Invitation is null,
+            task.Attachments
+                .OrderBy(attachment => attachment.CreatedAt)
+                .Select(attachment => new TaskAttachmentDetails(
+                    attachment.Id,
+                    attachment.OriginalFileName,
+                    attachment.ContentType,
+                    attachment.SizeBytes,
+                    attachment.CreatedAt))
+                .ToArray(),
+            mentions);
+    }
 
     private async Task<Guid> GetCurrentUserIdAsync()
     {
@@ -1281,10 +1407,8 @@ public sealed class TaskStore(
         else if (request.Title.Trim().Length > 180)
             errors.Add("Task title cannot exceed 180 characters.");
 
-        if ((request.Problem?.Length ?? 0) > 4000)
-            errors.Add("Task problem cannot exceed 4000 characters.");
-        if ((request.ExpectedResult?.Length ?? 0) > 4000)
-            errors.Add("Task expected result cannot exceed 4000 characters.");
+        if ((request.Description?.Length ?? 0) > 10000)
+            errors.Add("Task description cannot exceed 10000 characters.");
         if (request.AssigneeId == Guid.Empty)
             errors.Add("Choose a valid task assignee.");
         else if (request.AssigneeId is null && !string.IsNullOrWhiteSpace(request.AssigneeEmail) &&
@@ -1326,10 +1450,8 @@ public sealed class TaskStore(
         else if (request.Title.Trim().Length > 180)
             errors.Add("Task title cannot exceed 180 characters.");
 
-        if ((request.Problem?.Trim().Length ?? 0) > 4000)
-            errors.Add("Task problem cannot exceed 4000 characters.");
-        if ((request.ExpectedResult?.Trim().Length ?? 0) > 4000)
-            errors.Add("Task expected result cannot exceed 4000 characters.");
+        if ((request.Description?.Trim().Length ?? 0) > 10000)
+            errors.Add("Task description cannot exceed 10000 characters.");
         if (request.Priority is not null && !Enum.IsDefined(request.Priority.Value))
             errors.Add("Choose a valid task priority.");
         if (request.ProjectId == Guid.Empty)
@@ -1432,6 +1554,9 @@ public sealed class TaskStore(
 
     private sealed record TaskUser(Guid Id, string Name, string Email);
     private sealed record ValidatedImage(byte[] Bytes, string ContentType);
+    private sealed record ResolvedTaskMentions(
+        string Description,
+        IReadOnlyList<TaskMention> Mentions);
     private sealed record DeadlineRequestSnapshot(
         DateOnly CurrentDeadline,
         DateOnly RequestedDeadline,

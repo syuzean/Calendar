@@ -25,5 +25,6 @@ public enum InboxActivityType
     DeadlineChangeDeclined,
     WorkStatusChanged,
     CommentAdded,
-    TaskUpdated
+    TaskUpdated,
+    TaskMentioned
 }

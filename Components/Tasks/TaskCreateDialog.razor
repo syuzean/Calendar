@@ -35,14 +35,9 @@
             </label>
 
             <div class="task-structured-fields">
-                <label class="field">
-                    <span>Problem <em>optional · Markdown</em></span>
-                    <textarea rows="3" maxlength="4000" placeholder="Describe the problem or work to be done" @bind="Problem"></textarea>
-                </label>
-                <label class="field">
-                    <span>Expected result <em>optional · Markdown</em></span>
-                    <textarea rows="3" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
-                </label>
+                <TaskMentionEditor Label="Description" Rows="6" Users="@MentionUsers"
+                                   Placeholder="Describe the task, context, and expected outcome"
+                                   @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
 
             <div class="field task-attachments-field">
@@ -143,13 +138,14 @@
     [Parameter] public string? ErrorMessage { get; set; }
 
     private readonly List<AssigneeOption> Assignees = [];
+    private IReadOnlyList<TaskMentionUserOption> MentionUsers = [];
     private readonly string ModalInstanceId = Guid.NewGuid().ToString("N");
     private string BackdropId => $"task-create-backdrop-{ModalInstanceId}";
     private string ModalId => $"task-create-modal-{ModalInstanceId}";
     private string ScrollRegionId => $"task-create-scroll-{ModalInstanceId}";
     private string Title = string.Empty;
-    private string Problem = string.Empty;
-    private string ExpectedResult = string.Empty;
+    private string Description = string.Empty;
+    private IReadOnlyCollection<Guid> DescriptionMentionUserIds = [];
     private string TitleError = string.Empty;
     private string DeadlineError = string.Empty;
     private Guid? SelectedAssigneeId;
@@ -175,6 +171,9 @@
             .OrderBy(user => user.Name)
             .Select(user => new AssigneeOption(user.Id, user.Name, user.Email, false))
             .ToListAsync();
+        MentionUsers = users
+            .Select(user => new TaskMentionUserOption(user.Id, user.Name, user.Email))
+            .ToArray();
 
         var currentUser = users.FirstOrDefault(user =>
             user.Id == currentUserId ||
@@ -223,14 +222,14 @@
 
         await Created.InvokeAsync(new CreateLumaTaskRequest(
             Title.Trim(),
-            Problem.Trim(),
+            Description.Trim(),
             SelectedAssigneeId,
             Deadline,
             Priority,
             SelectedInvitationEmail,
             SelectedProjectId,
-            ExpectedResult.Trim(),
-            AttachmentPicker?.GetUploads()));
+            AttachmentPicker?.GetUploads(),
+            DescriptionMentionUserIds));
     }
 
     private Task Cancel() => CancelRequested.InvokeAsync();

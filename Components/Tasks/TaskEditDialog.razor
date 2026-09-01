@@ -1,5 +1,6 @@
 @using global::Calendar.Services
 @using global::Calendar.Models
+@inject TaskStore TaskStore
 
 <div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Cancel">
     <TaskModalInteraction BackdropId="@BackdropId" ModalId="@ModalId" ScrollRegionId="@ScrollRegionId" />
@@ -9,7 +10,7 @@
             <div>
                 <span class="eyebrow">EDIT TASK</span>
                 <h2 id="task-edit-title">Update task details</h2>
-                <p>Update the title, structured details, or priority.</p>
+                <p>Update the title, description, or priority.</p>
             </div>
             <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
         </header>
@@ -31,14 +32,9 @@
             <TaskProjectPicker @bind-Value="ProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <div class="task-structured-fields">
-                <label class="field">
-                    <span>Problem <em>optional · Markdown</em></span>
-                    <textarea rows="4" maxlength="4000" placeholder="Describe the problem or work to be done" @bind="Problem"></textarea>
-                </label>
-                <label class="field">
-                    <span>Expected result <em>optional · Markdown</em></span>
-                    <textarea rows="4" maxlength="4000" placeholder="Describe what a successful result looks like" @bind="ExpectedResult"></textarea>
-                </label>
+                <TaskMentionEditor Label="Description" Rows="7" Users="@MentionUsers"
+                                   Placeholder="Describe the task, context, and expected outcome"
+                                   @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
             @if (Details.Attachments.Count > 0)
             {
@@ -85,21 +81,25 @@
     private string BackdropId => $"task-edit-backdrop-{ModalInstanceId}";
     private string ModalId => $"task-edit-modal-{ModalInstanceId}";
     private string ScrollRegionId => $"task-edit-scroll-{ModalInstanceId}";
-    private string Problem = string.Empty;
-    private string ExpectedResult = string.Empty;
+    private string Description = string.Empty;
+    private IReadOnlyCollection<Guid> DescriptionMentionUserIds = [];
     private string TitleError = string.Empty;
     private TaskPriority Priority;
     private Guid? ProjectId;
     private TaskAttachmentPicker? AttachmentPicker;
     private readonly HashSet<Guid> RemovedAttachmentIds = [];
+    private IReadOnlyList<TaskMentionUserOption> MentionUsers = [];
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         Title = Details.Title;
-        Problem = Details.Problem;
-        ExpectedResult = Details.ExpectedResult;
+        Description = Details.Description;
         Priority = Details.Priority;
         ProjectId = Details.ProjectId;
+        MentionUsers = await TaskStore.LoadMentionUsersAsync();
+        DescriptionMentionUserIds = Details.Mentions
+            .Select(mention => mention.UserId)
+            .ToArray();
     }
 
     private async Task Submit()
@@ -107,8 +107,9 @@
         TitleError = string.IsNullOrWhiteSpace(Title) ? "Give your task a title." : string.Empty;
         if (TitleError.Length > 0) return;
         await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
-            Title.Trim(), Problem.Trim(), Details.Version, Priority, ProjectId, ExpectedResult.Trim(),
-            AttachmentPicker?.GetUploads(), RemovedAttachmentIds.ToArray()));
+            Title.Trim(), Description.Trim(), Details.Version, Priority, ProjectId,
+            AttachmentPicker?.GetUploads(), RemovedAttachmentIds.ToArray(),
+            DescriptionMentionUserIds));
     }
 
     private void ToggleAttachmentRemoval(Guid attachmentId)

@@ -1,15 +1,19 @@
 using Ganss.Xss;
 using Markdig;
+using System.Text.RegularExpressions;
 
 namespace Calendar.Services;
 
 public interface ITaskMarkdownRenderer
 {
-    string RenderHtml(string? markdown);
+    string RenderHtml(string? markdown, IReadOnlyCollection<string>? mentionNames = null);
 }
 
 public sealed class TaskMarkdownRenderer : ITaskMarkdownRenderer
 {
+    private static readonly Regex MentionLinkPattern = new(
+        "<a href=\"luma-user:(?<id>[0-9a-fA-F-]{36})\">(?<label>.*?)</a>",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .DisableHtml()
         .Build();
@@ -28,14 +32,35 @@ public sealed class TaskMarkdownRenderer : ITaskMarkdownRenderer
         sanitizer.AllowedAttributes.Clear();
         sanitizer.AllowedAttributes.UnionWith(["href", "title"]);
         sanitizer.AllowedSchemes.Clear();
-        sanitizer.AllowedSchemes.UnionWith(["http", "https", "mailto"]);
+        sanitizer.AllowedSchemes.UnionWith(["http", "https", "mailto", TaskMentionSyntax.Scheme]);
         sanitizer.AllowedCssProperties.Clear();
         sanitizer.AllowedAtRules.Clear();
     }
 
-    public string RenderHtml(string? markdown)
+    public string RenderHtml(string? markdown, IReadOnlyCollection<string>? mentionNames = null)
     {
         if (string.IsNullOrWhiteSpace(markdown)) return string.Empty;
-        return sanitizer.Sanitize(Markdown.ToHtml(markdown, Pipeline));
+        var sanitized = sanitizer.Sanitize(Markdown.ToHtml(markdown, Pipeline));
+        sanitized = MentionLinkPattern.Replace(
+            sanitized,
+            match => $"<span class=\"task-mention\">{match.Groups["label"].Value}</span>");
+        if (mentionNames is null || mentionNames.Count == 0) return sanitized;
+
+        var encodedMentions = mentionNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => System.Net.WebUtility.HtmlEncode(TaskMentionSyntax.CreateVisibleMention(name)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(mention => mention.Length)
+            .ToArray();
+        if (encodedMentions.Length == 0) return sanitized;
+
+        var alternatives = string.Join("|", encodedMentions.Select(Regex.Escape));
+        sanitized = Regex.Replace(
+            sanitized,
+            $"(?<![\\p{{L}}\\p{{N}}_])(?:{alternatives})(?![\\p{{L}}\\p{{N}}_])(?![^<]*>)",
+            match => $"<span class=\"task-mention\">{match.Value}</span>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return sanitized;
     }
 }

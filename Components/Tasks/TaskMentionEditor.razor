@@ -1,0 +1,114 @@
+@using global::Calendar.Services
+@inject IJSRuntime JS
+
+<div class="field task-mention-editor" @onclick:stopPropagation="true">
+    <span>@Label <em>optional · Markdown · @@mentions</em></span>
+    <div class="task-mention-input-wrap">
+        <textarea @ref="TextArea" rows="@Rows" maxlength="10000" value="@Value"
+                  placeholder="@Placeholder" aria-label="@Label"
+                  aria-autocomplete="list" aria-expanded="@ShowSuggestions"
+                  @oninput="HandleInputAsync" @onkeydown="HandleKeyDown"
+                  @onkeydown:stopPropagation="ShowSuggestions"></textarea>
+        @if (ShowSuggestions)
+        {
+            <div class="task-mention-menu" role="listbox" aria-label="Mention a LUMA user">
+                @if (FilteredUsers.Count == 0)
+                {
+                    <span class="task-mention-empty">No matching LUMA users</span>
+                }
+                else
+                {
+                    @foreach (var user in FilteredUsers)
+                    {
+                        <button type="button" role="option" @onmousedown:preventDefault="true"
+                                @onclick="() => SelectUserAsync(user)">
+                            <span class="task-mention-avatar" aria-hidden="true">@InitialFor(user.Name)</span>
+                            <span><strong>@user.Name</strong><small>@user.Email</small></span>
+                            <i aria-hidden="true">@@</i>
+                        </button>
+                    }
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter] public string Placeholder { get; set; } = string.Empty;
+    [Parameter] public int Rows { get; set; } = 4;
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyCollection<Guid> MentionUserIds { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyCollection<Guid>> MentionUserIdsChanged { get; set; }
+    [Parameter] public IReadOnlyList<TaskMentionUserOption> Users { get; set; } = [];
+
+    private ElementReference TextArea;
+    private MentionContext? Context;
+    private bool ShowSuggestions;
+
+    private IReadOnlyList<TaskMentionUserOption> FilteredUsers
+    {
+        get
+        {
+            var query = Context?.Query?.Trim() ?? string.Empty;
+            return Users
+                .Where(user => query.Length == 0 ||
+                    user.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    user.Email.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .Take(6)
+                .ToArray();
+        }
+    }
+
+    private async Task HandleInputAsync(ChangeEventArgs args)
+    {
+        Value = args.Value?.ToString() ?? string.Empty;
+        await ValueChanged.InvokeAsync(Value);
+        var retainedMentionIds = MentionUserIds
+            .Where(userId => Users.FirstOrDefault(user => user.Id == userId) is { } user &&
+                             TaskMentionSyntax.ContainsVisibleMention(Value, user.Name))
+            .Distinct()
+            .ToArray();
+        if (!MentionUserIds.Order().SequenceEqual(retainedMentionIds.Order()))
+            await MentionUserIdsChanged.InvokeAsync(retainedMentionIds);
+        Context = await JS.InvokeAsync<MentionContext?>("lumaTaskMentions.getContext", TextArea);
+        ShowSuggestions = Context is not null;
+    }
+
+    private async Task SelectUserAsync(TaskMentionUserOption user)
+    {
+        if (Context is null) return;
+        Value = await JS.InvokeAsync<string>(
+            "lumaTaskMentions.insert",
+            TextArea,
+            Context.Start,
+            Context.End,
+            TaskMentionSyntax.CreateVisibleMention(user.Name));
+        var updatedMentionIds = MentionUserIds.Append(user.Id).Distinct().ToArray();
+        Context = null;
+        ShowSuggestions = false;
+        await ValueChanged.InvokeAsync(Value);
+        await MentionUserIdsChanged.InvokeAsync(updatedMentionIds);
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            Context = null;
+            ShowSuggestions = false;
+        }
+    }
+
+    private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
+        ? "?"
+        : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+    private sealed class MentionContext
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
+        public string Query { get; set; } = string.Empty;
+    }
+}

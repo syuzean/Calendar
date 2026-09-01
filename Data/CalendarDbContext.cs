@@ -16,6 +16,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<LumaProject> Projects => Set<LumaProject>();
     public DbSet<InboxItem> InboxItems => Set<InboxItem>();
     public DbSet<TaskAttachment> TaskAttachments => Set<TaskAttachment>();
+    public DbSet<TaskMention> TaskMentions => Set<TaskMention>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -82,8 +83,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
         modelBuilder.Entity<LumaTask>(entity =>
         {
             entity.Property(task => task.Title).HasMaxLength(180);
-            entity.Property(task => task.Problem).HasMaxLength(4000);
-            entity.Property(task => task.ExpectedResult).HasMaxLength(4000);
+            entity.Property(task => task.Description).HasMaxLength(10000);
             entity.Property(task => task.DeadlineChangeComment).HasMaxLength(1000);
             entity.Property(task => task.Deadline).HasColumnType("date");
             entity.Property(task => task.RequestedDeadline).HasColumnType("date");
@@ -165,7 +165,7 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
         modelBuilder.Entity<InboxItem>(entity =>
         {
             entity.ToTable("InboxItems", table =>
-                table.HasCheckConstraint("CK_InboxItems_ActivityType", "[ActivityType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8)"));
+                table.HasCheckConstraint("CK_InboxItems_ActivityType", "[ActivityType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)"));
             entity.Property(item => item.Message).HasMaxLength(500);
             entity.HasIndex(item => new { item.RecipientUserId, item.ReadAt, item.CreatedAt });
             entity.HasIndex(item => item.TaskId);
@@ -198,6 +198,21 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(attachment => attachment.UploadedByUser)
                 .WithMany(user => user.UploadedTaskAttachments)
                 .HasForeignKey(attachment => attachment.UploadedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<TaskMention>(entity =>
+        {
+            entity.ToTable("TaskMentions");
+            entity.HasKey(mention => new { mention.TaskId, mention.UserId });
+            entity.HasIndex(mention => mention.UserId);
+            entity.HasOne(mention => mention.Task)
+                .WithMany(task => task.Mentions)
+                .HasForeignKey(mention => mention.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(mention => mention.User)
+                .WithMany(user => user.TaskMentions)
+                .HasForeignKey(mention => mention.UserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
     }

@@ -36,4 +36,27 @@ public sealed class TaskMarkdownRendererTests
 
         Assert.Contains("href=\"https://luma.example/tasks\"", html);
     }
+
+    [Fact]
+    public void RenderHtml_RendersLumaMentionAsStyledNonNavigatingText()
+    {
+        var html = renderer.RenderHtml(
+            TaskMentionSyntax.CreateVisibleMention("Anna Smith"),
+            ["Anna Smith"]);
+
+        Assert.Contains("class=\"task-mention\"", html);
+        Assert.Contains("@Anna Smith", html);
+        Assert.DoesNotContain("luma-user:", html);
+        Assert.DoesNotContain("<a", html);
+    }
+
+    [Fact]
+    public void RenderHtml_DistinguishesOverlappingMentionNames()
+    {
+        var html = renderer.RenderHtml("@Anna and @Anna Smith", ["Anna", "Anna Smith"]);
+
+        Assert.Equal(2, html.Split("class=\"task-mention\"").Length - 1);
+        Assert.Contains(">@Anna</span>", html);
+        Assert.Contains("@Anna Smith</span>", html);
+    }
 }

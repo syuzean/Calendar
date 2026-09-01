@@ -74,17 +74,12 @@
 
 .task-structured-description {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 14px;
 }
 
 .task-structured-description > article {
     min-width: 0;
-}
-
-.task-structured-description > article + article {
-    border-left: 1px solid #e8e3ed;
-    padding-left: 14px;
 }
 
 .task-structured-description article > span,
@@ -195,6 +190,14 @@
 .task-markdown ::deep pre { overflow-x: auto; border-radius: 8px; background: #2f2936; padding: 9px; color: #f5f1fa; }
 .task-markdown ::deep pre code { background: transparent; padding: 0; color: inherit; }
 .task-markdown ::deep a { color: #6844dc; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.task-markdown ::deep .task-mention {
+    display: inline-block;
+    border-radius: 6px;
+    background: #eee9ff;
+    padding: 0 4px;
+    color: #6844dc;
+    font-weight: 750;
+}
 
 .task-attachment-gallery {
     border: 1px solid #e8e3ed;
@@ -614,13 +617,6 @@
 
     .task-structured-description { grid-template-columns: 1fr; }
     .task-attachment-gallery > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-    .task-structured-description > article + article {
-        border-top: 1px solid #e8e3ed;
-        border-left: 0;
-        padding-top: 14px;
-        padding-left: 0;
-    }
 
     .task-detail-grid {
         grid-template-columns: 1fr;
