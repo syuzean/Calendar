@@ -329,6 +329,32 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task CreateAndEditTask_PreserveExternalMarkdownImageWithoutFetchingIt()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        const string unreachableImage = "![Remote screenshot](https://127.0.0.1:1/unreachable.png)";
+
+        var taskId = await store.CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { Description = unreachableImage });
+        var created = await store.LoadDetailsAsync(taskId);
+
+        Assert.Equal(unreachableImage, created.Description);
+        Assert.Empty(created.Attachments);
+
+        var editedDescription = $"Context\n\n{unreachableImage}";
+        var edited = await store.UpdateContentAsync(taskId, new(
+            created.Title,
+            editedDescription,
+            created.Version,
+            created.Priority,
+            created.ProjectId));
+
+        Assert.Equal(editedDescription, edited.Description);
+        Assert.Empty(edited.Attachments);
+    }
+
+    [Fact]
     public async Task MakerEdit_ResolvesNewInlineMarkdownImageAndPreservesItsPosition()
     {
         var fixture = await TestFixture.CreateAsync();

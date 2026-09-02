@@ -2,6 +2,7 @@
 @using global::Calendar.Models
 @inject ITaskMarkdownRenderer MarkdownRenderer
 @inject IJSRuntime JS
+@inject ILogger<TaskDetailsDialog> Logger
 @implements IAsyncDisposable
 
 <div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Close">
@@ -292,6 +293,7 @@
     private bool PreviewActualSize;
     private MarkdownImagePreview? MarkdownPreview;
     private DotNetObjectReference<TaskDetailsDialog>? dotNetReference;
+    private bool markdownViewerInitializationAttempted;
     private TaskAttachmentDetails? PreviewAttachment =>
         Details is not null && PreviewIndex is { } index && index >= 0 && index < Details.Attachments.Count
             ? Details.Attachments[index]
@@ -304,12 +306,22 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Details is null || string.IsNullOrWhiteSpace(Details.Description)) return;
+        if (markdownViewerInitializationAttempted ||
+            Details is null ||
+            string.IsNullOrWhiteSpace(Details.Description)) return;
+        markdownViewerInitializationAttempted = true;
         dotNetReference ??= DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync(
-            "lumaTaskAttachments.initializeMarkdownViewer",
-            MarkdownContainerId,
-            dotNetReference);
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "lumaTaskAttachments.initializeMarkdownViewer",
+                MarkdownContainerId,
+                dotNetReference);
+        }
+        catch (Exception exception) when (exception is JSException or JSDisconnectedException or TaskCanceledException or InvalidOperationException)
+        {
+            Logger.LogWarning(exception, "Task Markdown image preview could not be initialized for task {TaskId}.", Details.Id);
+        }
     }
 
     private Task Close() => CloseRequested.InvokeAsync();

@@ -146,6 +146,13 @@ window.lumaTaskAttachments = (() => {
             if (!image || !container.contains(image)) return;
             open(event);
         };
+        const imageError = event => {
+            const image = event.target;
+            if (!(image instanceof HTMLImageElement) || !container.contains(image)) return;
+            image.classList.add("task-markdown-image-unavailable");
+            image.title = "This image could not be loaded.";
+            image.setAttribute("aria-label", `${image.alt || "Task image"} could not be loaded`);
+        };
         container.querySelectorAll("img").forEach(image => {
             image.tabIndex = 0;
             image.setAttribute("role", "button");
@@ -153,7 +160,8 @@ window.lumaTaskAttachments = (() => {
         });
         container.addEventListener("click", open);
         container.addEventListener("keydown", keydown);
-        viewerBindings.set(containerId, { container, open, keydown, dotNetReference });
+        container.addEventListener("error", imageError, true);
+        viewerBindings.set(containerId, { container, open, keydown, imageError, dotNetReference });
     }
 
     function disposeMarkdownViewer(containerId) {
@@ -161,6 +169,7 @@ window.lumaTaskAttachments = (() => {
         if (!binding) return;
         binding.container.removeEventListener("click", binding.open);
         binding.container.removeEventListener("keydown", binding.keydown);
+        binding.container.removeEventListener("error", binding.imageError, true);
         viewerBindings.delete(containerId);
     }
 
