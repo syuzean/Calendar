@@ -1,8 +1,16 @@
 .task-mention-editor { min-width: 0; }
 .task-mention-input-wrap { position: relative; }
 .task-mention-input-wrap textarea { width: 100%; resize: vertical; }
+.task-mention-editor-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.task-mention-editor-heading > span { color:#6d6873; font-size:10px; font-weight:700; }
+.task-mention-editor-heading > span em { color:#aaa5ae; font-style:normal; font-weight:400; }
+.task-markdown-image-action { display:inline-flex; align-items:center; gap:5px; border:0; border-radius:7px; background:transparent; padding:4px 6px; color:#6844dc; font-size:8px; font-weight:750; cursor:pointer; }
+.task-markdown-image-action:hover,
+.task-markdown-image-action:focus-visible { outline:none; background:#f0ebff; }
+.task-markdown-image-input { display:none !important; }
+.task-markdown-image-error { display:block; margin-top:5px; color:#b34255; font-size:8px; }
 
-.task-mention-editor-compact > span {
+.task-mention-editor-compact .task-mention-editor-heading > span {
     display: block;
     margin-bottom: 5px;
     color: #817989;
@@ -12,7 +20,7 @@
     text-transform: uppercase;
 }
 
-.task-mention-editor-compact > span em {
+.task-mention-editor-compact .task-mention-editor-heading > span em {
     color: #a198a8;
     font-size: 7px;
     font-style: normal;

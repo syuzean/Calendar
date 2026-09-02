@@ -1,6 +1,8 @@
 @using global::Calendar.Services
 @using global::Calendar.Models
 @inject ITaskMarkdownRenderer MarkdownRenderer
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <div id="@BackdropId" class="dialog-backdrop task-modal-backdrop" role="presentation" @onclick="Close">
     <TaskModalInteraction BackdropId="@BackdropId" ModalId="@ModalId" ScrollRegionId="@ScrollRegionId" />
@@ -41,7 +43,7 @@
                         }
                         else
                         {
-                            <div class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(
+                            <div id="@MarkdownContainerId" class="task-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(
                                 Details.Description,
                                 Details.Mentions.Select(mention => mention.UserName).ToArray()))</div>
                         }
@@ -212,7 +214,7 @@
         </div>
     </section>
 
-    @if (PreviewAttachment is { } preview)
+    @if (PreviewImage is { } preview)
     {
         <div id="@PreviewBackdropId" class="task-lightbox-backdrop" role="presentation"
              @onclick="ClosePreview" @onclick:stopPropagation="true">
@@ -225,7 +227,7 @@
                     <div>
                         <span>IMAGE PREVIEW</span>
                         <strong id="task-lightbox-title">@preview.FileName</strong>
-                        @if (Details is { Attachments.Count: > 1 })
+                        @if (PreviewIndex is not null && Details is { Attachments.Count: > 1 })
                         {
                             <small>@(PreviewIndex!.Value + 1) of @Details.Attachments.Count</small>
                         }
@@ -234,13 +236,13 @@
                 </header>
 
                 <div id="@PreviewScrollRegionId" class="task-lightbox-stage @(PreviewActualSize ? "actual-size" : null)">
-                    @if (Details is { Attachments.Count: > 1 })
+                    @if (PreviewIndex is not null && Details is { Attachments.Count: > 1 })
                     {
                         <button type="button" class="task-lightbox-navigation previous"
                                 aria-label="Previous image" @onclick="ShowPreviousPreview">‹</button>
                     }
                     <img src="@preview.Url" alt="@preview.FileName" />
-                    @if (Details is { Attachments.Count: > 1 })
+                    @if (PreviewIndex is not null && Details is { Attachments.Count: > 1 })
                     {
                         <button type="button" class="task-lightbox-navigation next"
                                 aria-label="Next image" @onclick="ShowNextPreview">›</button>
@@ -248,7 +250,7 @@
                 </div>
 
                 <footer class="task-lightbox-footer">
-                    <span>@FormatSize(preview.SizeBytes)</span>
+                    <span>@(preview.SizeBytes is { } size ? FormatSize(size) : "External image")</span>
                     <button type="button" @onclick="TogglePreviewSize">
                         @(PreviewActualSize ? "Fit to screen" : "View full size")
                     </button>
@@ -285,12 +287,30 @@
     private string PreviewBackdropId => $"task-preview-backdrop-{ModalInstanceId}";
     private string PreviewModalId => $"task-preview-modal-{ModalInstanceId}";
     private string PreviewScrollRegionId => $"task-preview-scroll-{ModalInstanceId}";
+    private string MarkdownContainerId => $"task-markdown-{ModalInstanceId}";
     private int? PreviewIndex;
     private bool PreviewActualSize;
+    private MarkdownImagePreview? MarkdownPreview;
+    private DotNetObjectReference<TaskDetailsDialog>? dotNetReference;
     private TaskAttachmentDetails? PreviewAttachment =>
         Details is not null && PreviewIndex is { } index && index >= 0 && index < Details.Attachments.Count
             ? Details.Attachments[index]
             : null;
+    private LightboxImage? PreviewImage => MarkdownPreview is { } markdown
+        ? new LightboxImage(markdown.Url, markdown.FileName, null)
+        : PreviewAttachment is { } attachment
+            ? new LightboxImage(attachment.Url, attachment.FileName, attachment.SizeBytes)
+            : null;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Details is null || string.IsNullOrWhiteSpace(Details.Description)) return;
+        dotNetReference ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync(
+            "lumaTaskAttachments.initializeMarkdownViewer",
+            MarkdownContainerId,
+            dotNetReference);
+    }
 
     private Task Close() => CloseRequested.InvokeAsync();
     private Task Accept() => Details is null ? Task.CompletedTask : AcceptRequested.InvokeAsync(Details.Id);
@@ -303,12 +323,23 @@
     private Task CompleteWork() => WorkStatusChangeRequested.InvokeAsync(TaskWorkStatus.Done);
     private void OpenPreview(int index)
     {
+        MarkdownPreview = null;
         PreviewIndex = index;
         PreviewActualSize = false;
+    }
+    [JSInvokable]
+    public void OpenMarkdownImage(string url, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        PreviewIndex = null;
+        MarkdownPreview = new MarkdownImagePreview(url, string.IsNullOrWhiteSpace(fileName) ? "Task image" : fileName);
+        PreviewActualSize = false;
+        StateHasChanged();
     }
     private void ClosePreview()
     {
         PreviewIndex = null;
+        MarkdownPreview = null;
         PreviewActualSize = false;
     }
     private void TogglePreviewSize() => PreviewActualSize = !PreviewActualSize;
@@ -369,4 +400,14 @@
     private static string FormatSize(long bytes) => bytes >= 1024 * 1024
         ? $"{bytes / 1024d / 1024d:0.#} MB"
         : $"{Math.Max(1, bytes / 1024d):0.#} KB";
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("lumaTaskAttachments.disposeMarkdownViewer", MarkdownContainerId); }
+        catch (JSDisconnectedException) { }
+        dotNetReference?.Dispose();
+    }
+
+    private sealed record MarkdownImagePreview(string Url, string FileName);
+    private sealed record LightboxImage(string Url, string FileName, long? SizeBytes);
 }

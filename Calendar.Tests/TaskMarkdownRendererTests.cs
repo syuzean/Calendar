@@ -53,6 +53,30 @@ public sealed class TaskMarkdownRendererTests
     }
 
     [Fact]
+    public void RenderHtml_RendersExternalAndLumaHostedMarkdownImages()
+    {
+        var attachmentId = Guid.NewGuid();
+        var html = renderer.RenderHtml(
+            $"![Architecture diagram](https://images.example/diagram.png)\n\n" +
+            $"![Task screenshot](/task-attachments/{attachmentId:D})");
+
+        Assert.Contains("<img", html);
+        Assert.Contains("src=\"https://images.example/diagram.png\"", html);
+        Assert.Contains($"src=\"/task-attachments/{attachmentId:D}\"", html);
+        Assert.Contains("alt=\"Architecture diagram\"", html);
+    }
+
+    [Fact]
+    public void RenderHtml_RejectsUnsafeMarkdownImageSources()
+    {
+        var html = renderer.RenderHtml(
+            "![Unsafe](javascript:alert(1))\n\n![Embedded](data:image/png;base64,AAAA)");
+
+        Assert.DoesNotContain("javascript:", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("data:image", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RenderHtml_RendersLumaMentionAsStyledNonNavigatingText()
     {
         var html = renderer.RenderHtml(

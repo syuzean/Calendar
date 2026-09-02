@@ -219,17 +219,19 @@
                                                     data-work-status="@(task.CanDrag ? task.WorkStatus.ToString() : null)"
                                                     title="@(task.CanDrag ? "Drag to the next work stage" : "Open task details")"
                                                     @onclick="() => OpenTaskAsync(task.Id)">
-                                                <strong>@task.Title</strong>
+                                                <span class="task-title-priority-row">
+                                                    <strong>@task.Title</strong>
+                                                    <span class="task-priority-inline @PriorityClass(task.Priority)">
+                                                        <i aria-hidden="true"></i>
+                                                        @PriorityLabel(task.Priority)
+                                                    </span>
+                                                </span>
                                                 <span class="task-board-person">@task.RelationshipLabel</span>
                                                 @if (!string.IsNullOrWhiteSpace(task.ProjectName))
                                                 {
                                                     <span class="task-project-chip">◇ @task.ProjectName</span>
                                                 }
                                                 <span class="task-board-card-meta">
-                                                    <span class="task-priority-badge @PriorityClass(task.Priority)">
-                                                        @if (task.Priority != TaskPriority.None) { <i aria-hidden="true">●</i> }
-                                                        @PriorityLabel(task.Priority)
-                                                    </span>
                                                     <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited, task.IsUnassigned)">@StatusLabel(task.AssignmentStatus, task.IsInvited, task.IsUnassigned)</span>
                                                 </span>
                                                 <span class="task-board-deadline @deadlineClass">
@@ -274,7 +276,13 @@
                                     <button type="button" class="task-list-card @deadlineClass" @onclick="() => OpenTaskAsync(task.Id)">
                                         <span class="task-card-mark @RelationshipClass(task)" aria-hidden="true">@RelationshipMark(task)</span>
                                         <span class="task-card-copy">
-                                            <strong>@task.Title</strong>
+                                            <span class="task-title-priority-row">
+                                                <strong>@task.Title</strong>
+                                                <span class="task-priority-inline @PriorityClass(task.Priority)">
+                                                    <i aria-hidden="true"></i>
+                                                    @PriorityLabel(task.Priority)
+                                                </span>
+                                            </span>
                                             <span class="task-card-meta">
                                                 <small>@RelationshipLabel(task)</small>
                                                 @if (!string.IsNullOrWhiteSpace(task.ProjectName))
@@ -283,7 +291,6 @@
                                                 }
                                                 <span class="task-status-badge @StatusClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@StatusLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</span>
                                                 <span class="task-work-badge @WorkStatusClass(task.WorkStatus)">@WorkStatusLabel(task.WorkStatus)</span>
-                                                <span class="task-priority-badge @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</span>
                                             </span>
                                         </span>
                                         <span class="task-card-deadline @deadlineClass">

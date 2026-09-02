@@ -37,7 +37,8 @@ public sealed record TaskAttachmentUpload(
     string FileName,
     string ContentType,
     long Length,
-    Func<Stream> OpenReadStream);
+    Func<Stream> OpenReadStream,
+    string? InlineToken = null);
 
 public sealed record TaskAttachmentDetails(
     Guid Id,
@@ -297,6 +298,8 @@ public sealed class TaskStore(
             resolvedMentions.Mentions.Select(item => item.UserId));
         var storedAttachments = await StoreAttachmentsAsync(
             entity.Id, creatorId, request.Attachments, 0, 0);
+        entity.Description = TaskMarkdownImageSyntax.ResolvePendingUrls(
+            entity.Description, request.Attachments, storedAttachments);
         foreach (var attachment in storedAttachments)
             entity.Attachments.Add(attachment);
         try
@@ -766,6 +769,9 @@ public sealed class TaskStore(
                             removedAttachments.Sum(attachment => attachment.SizeBytes);
         var storedAttachments = await StoreAttachmentsAsync(
             task.Id, currentUserId, request.NewAttachments, remainingCount, remainingSize);
+        description = TaskMarkdownImageSyntax.ResolvePendingUrls(
+            description, request.NewAttachments, storedAttachments);
+        descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
         var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0;
         if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !attachmentsChanged && !mentionsChanged)
             return ToDetails(task, currentUserId);
@@ -1454,6 +1460,8 @@ public sealed class TaskStore(
 
         if ((request.Description?.Length ?? 0) > 10000)
             errors.Add("Task description cannot exceed 10000 characters.");
+        if (TaskMarkdownImageSyntax.ContainsEmbeddedDataImage(request.Description))
+            errors.Add("Paste or upload task images instead of embedding image data in the description.");
         if (request.AssigneeId == Guid.Empty)
             errors.Add("Choose a valid task assignee.");
         else if (request.AssigneeId is null && !string.IsNullOrWhiteSpace(request.AssigneeEmail) &&
@@ -1497,6 +1505,8 @@ public sealed class TaskStore(
 
         if ((request.Description?.Trim().Length ?? 0) > 10000)
             errors.Add("Task description cannot exceed 10000 characters.");
+        if (TaskMarkdownImageSyntax.ContainsEmbeddedDataImage(request.Description))
+            errors.Add("Paste or upload task images instead of embedding image data in the description.");
         if (request.Priority is not null && !Enum.IsDefined(request.Priority.Value))
             errors.Add("Choose a valid task priority.");
         if (request.ProjectId == Guid.Empty)

@@ -32,7 +32,7 @@
             <TaskProjectPicker @bind-Value="ProjectId" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <div class="task-structured-fields">
-                <TaskMentionEditor Label="Description" Rows="7" Users="@MentionUsers"
+                <TaskMentionEditor @ref="DescriptionEditor" Label="Description" Rows="7" Users="@MentionUsers" EnableImages="true"
                                    Placeholder="Describe the task, context, and expected outcome"
                                    @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
@@ -87,6 +87,7 @@
     private TaskPriority Priority;
     private Guid? ProjectId;
     private TaskAttachmentPicker? AttachmentPicker;
+    private TaskMentionEditor? DescriptionEditor;
     private readonly HashSet<Guid> RemovedAttachmentIds = [];
     private IReadOnlyList<TaskMentionUserOption> MentionUsers = [];
 
@@ -108,9 +109,14 @@
         if (TitleError.Length > 0) return;
         await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
             Title.Trim(), Description.Trim(), Details.Version, Priority, ProjectId,
-            AttachmentPicker?.GetUploads(), RemovedAttachmentIds.ToArray(),
+            CombinedUploads(), RemovedAttachmentIds.ToArray(),
             DescriptionMentionUserIds));
     }
+
+    private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>
+        (AttachmentPicker?.GetUploads() ?? [])
+        .Concat(DescriptionEditor?.GetImageUploads() ?? [])
+        .ToArray();
 
     private void ToggleAttachmentRemoval(Guid attachmentId)
     {

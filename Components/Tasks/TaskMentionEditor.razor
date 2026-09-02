@@ -1,14 +1,28 @@
 @using global::Calendar.Services
+@using Microsoft.AspNetCore.Components.Forms
 @inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <div class="field task-mention-editor @(Compact ? "task-mention-editor-compact" : null)" @onclick:stopPropagation="true">
-    <span>@Label @if (!string.IsNullOrWhiteSpace(HelpText)) { <em>@HelpText</em> }</span>
+    <div class="task-mention-editor-heading">
+        <span>@Label @if (!string.IsNullOrWhiteSpace(HelpText)) { <em>@HelpText</em> }</span>
+        @if (EnableImages)
+        {
+            <button type="button" class="task-markdown-image-action" title="Insert image at the cursor"
+                    @onclick="ChooseImageAsync"><span aria-hidden="true">▧</span> Insert image</button>
+        }
+    </div>
     <div class="task-mention-input-wrap">
-        <textarea @ref="TextArea" rows="@Rows" maxlength="@MaxLength" value="@Value"
+        <textarea id="@EditorId" @ref="TextArea" rows="@Rows" maxlength="@MaxLength" value="@Value"
                   placeholder="@Placeholder" aria-label="@Label"
                   aria-autocomplete="list" aria-expanded="@ShowSuggestions"
                   @oninput="HandleInputAsync" @onkeydown="HandleKeyDown" @onblur="HideSuggestions"
                   @onkeydown:stopPropagation="ShowSuggestions"></textarea>
+        @if (EnableImages)
+        {
+            <InputFile id="@ImageInputId" class="task-markdown-image-input" OnChange="ImagesSelectedAsync" multiple
+                       accept="image/png,image/jpeg,image/gif,image/webp" />
+        }
         @if (ShowSuggestions)
         {
             <div class="task-mention-menu @(Context?.PlaceAbove == true ? "task-mention-menu-above" : null) @(FilteredUsers.Count == 0 ? "task-mention-menu-empty-state" : null)"
@@ -34,6 +48,10 @@
             </div>
         }
     </div>
+    @if (!string.IsNullOrWhiteSpace(ImageError))
+    {
+        <small class="task-markdown-image-error" role="alert">@ImageError</small>
+    }
 </div>
 
 @code {
@@ -43,6 +61,7 @@
     [Parameter] public int MaxLength { get; set; } = 10000;
     [Parameter] public string HelpText { get; set; } = "optional · Markdown · @mentions";
     [Parameter] public bool Compact { get; set; }
+    [Parameter] public bool EnableImages { get; set; }
     [Parameter] public string Value { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public IReadOnlyCollection<Guid> MentionUserIds { get; set; } = [];
@@ -50,8 +69,30 @@
     [Parameter] public IReadOnlyList<TaskMentionUserOption> Users { get; set; } = [];
 
     private ElementReference TextArea;
+    private readonly string componentId = Guid.NewGuid().ToString("N");
+    private readonly List<InlineImageFile> InlineImages = [];
     private MentionContext? Context;
     private bool ShowSuggestions;
+    private bool imageInteropInitialized;
+    private string ImageError = string.Empty;
+    private string EditorId => $"task-markdown-editor-{componentId}";
+    private string ImageInputId => $"task-markdown-image-input-{componentId}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !EnableImages) return;
+        await JS.InvokeVoidAsync("lumaTaskAttachments.initializeMarkdownEditor", EditorId, ImageInputId);
+        imageInteropInitialized = true;
+    }
+
+    public IReadOnlyList<TaskAttachmentUpload> GetImageUploads() => InlineImages
+        .Select(image => new TaskAttachmentUpload(
+            image.File.Name,
+            image.File.ContentType,
+            image.File.Size,
+            () => image.File.OpenReadStream(TaskAttachmentRules.MaximumFileSizeBytes),
+            image.Token))
+        .ToArray();
 
     private string PopoverStyle => Context is null
         ? string.Empty
@@ -105,6 +146,52 @@
         await MentionUserIdsChanged.InvokeAsync(updatedMentionIds);
     }
 
+    private Task ChooseImageAsync() => EnableImages
+        ? JS.InvokeVoidAsync("lumaTaskAttachments.chooseMarkdownImage", EditorId, ImageInputId).AsTask()
+        : Task.CompletedTask;
+
+    private async Task ImagesSelectedAsync(InputFileChangeEventArgs args)
+    {
+        ImageError = string.Empty;
+        IReadOnlyList<IBrowserFile> files;
+        try
+        {
+            files = args.GetMultipleFiles(TaskAttachmentRules.MaximumAttachmentCount);
+        }
+        catch (InvalidOperationException)
+        {
+            ImageError = $"Choose no more than {TaskAttachmentRules.MaximumAttachmentCount} images.";
+            return;
+        }
+
+        var markdown = new List<string>();
+        foreach (var file in files)
+        {
+            if (InlineImages.Count >= TaskAttachmentRules.MaximumAttachmentCount)
+            {
+                ImageError = $"Choose no more than {TaskAttachmentRules.MaximumAttachmentCount} inline images.";
+                break;
+            }
+            if (file.Size > TaskAttachmentRules.MaximumFileSizeBytes)
+            {
+                ImageError = $"{file.Name} is larger than 5 MB.";
+                continue;
+            }
+            if (!IsSupportedImage(file.ContentType))
+            {
+                ImageError = $"{file.Name} is not a supported image.";
+                continue;
+            }
+
+            var token = Guid.NewGuid().ToString("N");
+            InlineImages.Add(new InlineImageFile(file, token));
+            markdown.Add(TaskMarkdownImageSyntax.CreateMarkdown(file.Name, token));
+        }
+
+        if (markdown.Count > 0)
+            await JS.InvokeVoidAsync("lumaTaskAttachments.insertMarkdownImages", EditorId, string.Join("\n", markdown));
+    }
+
     private void HandleKeyDown(KeyboardEventArgs args)
     {
         if (args.Key == "Escape")
@@ -120,6 +207,18 @@
     private static string InitialFor(string name) => string.IsNullOrWhiteSpace(name)
         ? "?"
         : char.ToUpperInvariant(name.Trim()[0]).ToString();
+
+    private static bool IsSupportedImage(string contentType) => contentType is
+        "image/png" or "image/jpeg" or "image/gif" or "image/webp";
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!imageInteropInitialized) return;
+        try { await JS.InvokeVoidAsync("lumaTaskAttachments.disposeMarkdownEditor", EditorId); }
+        catch (JSDisconnectedException) { }
+    }
+
+    private sealed record InlineImageFile(IBrowserFile File, string Token);
 
     private sealed class MentionContext
     {

@@ -190,6 +190,21 @@
 .task-markdown ::deep pre { overflow-x: auto; border-radius: 8px; background: #2f2936; padding: 9px; color: #f5f1fa; }
 .task-markdown ::deep pre code { background: transparent; padding: 0; color: inherit; }
 .task-markdown ::deep a { color: #6844dc; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.task-markdown ::deep img {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: 440px;
+    margin: 11px auto;
+    border: 1px solid #e5dfeb;
+    border-radius: 10px;
+    background: #f5f2f7;
+    object-fit: contain;
+    box-shadow: 0 5px 18px rgba(47, 35, 64, .08);
+    cursor: zoom-in;
+}
+.task-markdown ::deep img:focus-visible { outline: 2px solid rgba(111,75,242,.45); outline-offset: 3px; }
 .task-markdown ::deep .task-mention {
     display: inline-block;
     border-radius: 6px;

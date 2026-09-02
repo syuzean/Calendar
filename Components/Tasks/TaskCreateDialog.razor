@@ -35,7 +35,7 @@
             </label>
 
             <div class="task-structured-fields">
-                <TaskMentionEditor Label="Description" Rows="6" Users="@MentionUsers"
+                <TaskMentionEditor @ref="DescriptionEditor" Label="Description" Rows="6" Users="@MentionUsers" EnableImages="true"
                                    Placeholder="Describe the task, context, and expected outcome"
                                    @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
@@ -158,6 +158,7 @@
     private LumaDateOnlyPicker? DeadlinePicker;
     private TaskProjectPicker? ProjectPicker;
     private TaskAttachmentPicker? AttachmentPicker;
+    private TaskMentionEditor? DescriptionEditor;
 
     protected override async Task OnInitializedAsync()
     {
@@ -228,9 +229,14 @@
             Priority,
             SelectedInvitationEmail,
             SelectedProjectId,
-            AttachmentPicker?.GetUploads(),
+            CombinedUploads(),
             DescriptionMentionUserIds));
     }
+
+    private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>
+        (AttachmentPicker?.GetUploads() ?? [])
+        .Concat(DescriptionEditor?.GetImageUploads() ?? [])
+        .ToArray();
 
     private Task Cancel() => CancelRequested.InvokeAsync();
 

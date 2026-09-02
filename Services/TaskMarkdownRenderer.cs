@@ -28,10 +28,10 @@ public sealed class TaskMarkdownRenderer : ITaskMarkdownRenderer
         sanitizer.AllowedTags.UnionWith(
         [
             "p", "br", "strong", "em", "del", "blockquote", "code", "pre",
-            "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "a"
+            "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "a", "img"
         ]);
         sanitizer.AllowedAttributes.Clear();
-        sanitizer.AllowedAttributes.UnionWith(["href", "title"]);
+        sanitizer.AllowedAttributes.UnionWith(["href", "title", "src", "alt"]);
         sanitizer.AllowedSchemes.Clear();
         sanitizer.AllowedSchemes.UnionWith(["http", "https", "mailto", TaskMentionSyntax.Scheme]);
         sanitizer.AllowedCssProperties.Clear();

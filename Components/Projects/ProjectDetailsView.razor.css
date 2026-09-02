@@ -173,13 +173,22 @@
 .project-task-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .project-task-main strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .project-task-main small { color: #918898; font-size: 8px; }
+.task-title-priority-row { display:flex; align-items:center; gap:7px; min-width:0; }
+.task-title-priority-row > strong { overflow:hidden; min-width:0; text-overflow:ellipsis; white-space:nowrap; }
+.task-priority-inline { display:inline-flex; flex:0 0 auto; align-items:center; gap:4px; color:#8a8390; font-size:7.2px; font-weight:750; line-height:1; white-space:nowrap; }
+.task-priority-inline i { width:6px; height:6px; border-radius:50%; background:#aaa4ae; }
+.task-priority-inline.none { color:#8f8895; }
+.task-priority-inline.none i { background:#aaa4ae; }
+.task-priority-inline.low { color:#43815c; }
+.task-priority-inline.low i { background:#61a97c; }
+.task-priority-inline.medium { color:#9b6c20; }
+.task-priority-inline.medium i { background:#d9a642; }
+.task-priority-inline.high { color:#ad582f; }
+.task-priority-inline.high i { background:#df7949; }
+.task-priority-inline.urgent { color:#b63d53; }
+.task-priority-inline.urgent i { background:#dc5269; }
 .project-task-badges { display: flex; gap: 5px; }
 .project-task-badges i { border-radius: 99px; padding: 4px 7px; font-size: 7px; font-style: normal; white-space: nowrap; }
-.project-task-badges .priority.none { background:#f0eef2; color:#817987; }
-.project-task-badges .priority.low { background:#eaf7ef; color:#367850; }
-.project-task-badges .priority.medium { background:#fff5dc; color:#91661b; }
-.project-task-badges .priority.high { background:#fff0e7; color:#a15331; }
-.project-task-badges .priority.urgent { background:#ffe9ed; color:#a33a4e; }
 .project-task-badges .work { background:#efebff; color:#6442d6; }
 .project-task-badges .work.done { background:#e8f6ee; color:#35734d; }
 .project-task-badges .assignment { background:#f2eff5; color:#706778; }
@@ -284,7 +293,7 @@
 .project-board-card.overdue { border-left: 3px solid #d58a96; background: linear-gradient(90deg, #fffafb, #fff 25%); }
 .project-board-card.due-today { border-left: 3px solid #8a6ce7; }
 .project-board-card:focus-visible { outline: 2px solid rgba(111, 75, 242, .42); outline-offset: 2px; }
-.project-board-card > strong { overflow: hidden; font-size: 10.5px; line-height: 1.35; text-overflow: ellipsis; }
+.project-board-card .task-title-priority-row > strong { overflow: hidden; font-size: 10.5px; line-height: 1.35; text-overflow: ellipsis; }
 .project-board-person { overflow: hidden; color: #918995; font-size: 7.7px; text-overflow: ellipsis; white-space: nowrap; }
 .project-board-deadline { border-top: 1px solid #f0edf2; padding-top: 7px; color: #716a78; font-size: 8px; font-weight: 700; }
 .project-board-deadline.overdue { color: #b04f60; }

@@ -586,12 +586,51 @@
     outline-offset: 2px;
 }
 
-.task-board-card > strong {
+.task-title-priority-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.task-title-priority-row > strong {
     overflow: hidden;
+    min-width: 0;
     font-size: 10.5px;
     line-height: 1.35;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
+
+.task-priority-inline {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    color: #8a8390;
+    font-size: 7.2px;
+    font-weight: 750;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.task-priority-inline i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #aaa4ae;
+}
+
+.task-priority-inline.low { color: #43815c; }
+.task-priority-inline.low i { background: #61a97c; }
+.task-priority-inline.medium { color: #9b6c20; }
+.task-priority-inline.medium i { background: #d9a642; }
+.task-priority-inline.high { color: #ad582f; }
+.task-priority-inline.high i { background: #df7949; }
+.task-priority-inline.urgent { color: #b63d53; }
+.task-priority-inline.urgent i { background: #dc5269; }
+.task-priority-inline.none { color: #8f8895; }
+.task-priority-inline.none i { background: #aaa4ae; }
 
 .task-board-person {
     overflow: hidden;
@@ -613,15 +652,8 @@
     gap: 5px;
 }
 
-.task-board-card-meta .task-priority-badge,
 .task-board-card-meta .task-status-badge {
     padding: 3px 6px;
-}
-
-.task-board-card-meta .task-priority-badge i {
-    margin-right: 3px;
-    font-size: 6px;
-    font-style: normal;
 }
 
 .task-board-deadline {
@@ -749,7 +781,7 @@
     white-space: nowrap;
 }
 
-.task-card-copy > strong {
+.task-card-copy .task-title-priority-row > strong {
     overflow: hidden;
     font-size: 12px;
     letter-spacing: -.1px;
@@ -812,20 +844,6 @@
     background: #e8f6ef;
     color: #287554;
 }
-
-.task-priority-badge {
-    flex: 0 0 auto;
-    border-radius: 7px;
-    background: #f4f2f6;
-    padding: 3px 6px;
-    color: #7d7585;
-    font-size: 7px;
-    font-weight: 800;
-}
-
-.task-priority-badge.medium { background: #edf1fb; color: #536a9a; }
-.task-priority-badge.high { background: #fff1e6; color: #a45c24; }
-.task-priority-badge.urgent { background: #fdebed; color: #b34255; }
 
 .task-status-badge.pending {
     background: #f1edf5;

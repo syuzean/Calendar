@@ -289,6 +289,72 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public async Task CreateTask_ResolvesInlineMarkdownImageToStoredAttachmentUrl()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var token = Guid.NewGuid().ToString("N");
+        var upload = ImageUpload("inline.png", "image/png", PngBytes(7, 8, 9)) with
+        {
+            InlineToken = token
+        };
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                Description = $"Before\n\n{TaskMarkdownImageSyntax.CreateMarkdown(upload.FileName, token)}\n\nAfter",
+                Attachments = [upload]
+            });
+
+        var details = await fixture.CreateStore(fixture.Assignee).LoadDetailsAsync(taskId);
+        var attachment = Assert.Single(details.Attachments);
+        Assert.Contains($"![inline.png]({attachment.Url})", details.Description);
+        Assert.DoesNotContain("luma-task-image:", details.Description);
+        Assert.DoesNotContain("data:image", details.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateTask_RejectsBase64MarkdownImageData()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(
+                NewRequest(fixture.Assignee.Id) with
+                {
+                    Description = "![Embedded](data:image/png;base64,AAAA)"
+                }));
+
+        Assert.Contains("Paste or upload", exception.Message);
+        await AssertNoTasksAsync(fixture);
+    }
+
+    [Fact]
+    public async Task MakerEdit_ResolvesNewInlineMarkdownImageAndPreservesItsPosition()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+        var token = Guid.NewGuid().ToString("N");
+        var upload = ImageUpload("result.webp", "image/webp", WebpBytes()) with
+        {
+            InlineToken = token
+        };
+        var pendingMarkdown = TaskMarkdownImageSyntax.CreateMarkdown(upload.FileName, token);
+
+        var updated = await store.UpdateContentAsync(taskId, new(
+            before.Title,
+            $"Top\n\n{pendingMarkdown}\n\nBottom",
+            before.Version,
+            before.Priority,
+            before.ProjectId,
+            NewAttachments: [upload]));
+
+        var attachment = Assert.Single(updated.Attachments);
+        Assert.Equal($"Top\n\n![result.webp]({attachment.Url})\n\nBottom", updated.Description);
+    }
+
+    [Fact]
     public async Task CreateTask_RejectsInvalidOrMismatchedImageContent()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -2750,6 +2816,9 @@ public sealed class TaskStoreTests
 
     private static byte[] PngBytes(params byte[] payload) =>
         [137, 80, 78, 71, 13, 10, 26, 10, .. payload];
+
+    private static byte[] WebpBytes() =>
+        [82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80, 86, 80, 56, 32];
 
     private static CreateLumaTaskRequest NewRequest(Guid assigneeId) => new(
         "  Prepare launch notes  ",

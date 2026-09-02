@@ -84,10 +84,12 @@
                                             data-work-status="@(canDrag ? task.WorkStatus.ToString() : null)"
                                             title="@(canDrag ? "Drag to the next work stage" : "Open task details")"
                                             @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
-                                        <strong>@task.Title</strong>
+                                        <span class="task-title-priority-row">
+                                            <strong>@task.Title</strong>
+                                            <span class="task-priority-inline @PriorityClass(task.Priority)"><i aria-hidden="true"></i>@PriorityLabel(task.Priority)</span>
+                                        </span>
                                         <span class="project-board-person">@(IsUnassigned(task) ? "Unassigned" : $"Assigned to {task.AssigneeName}")</span>
                                         <span class="project-task-badges">
-                                            <i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i>
                                             <i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@AssignmentLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</i>
                                         </span>
                                         <span class="project-board-deadline @deadlineClass">
@@ -130,8 +132,14 @@
                 @foreach (var task in Tasks)
                 {
                     <button type="button" class="project-task-card" @onclick="() => OpenTaskRequested.InvokeAsync(task.Id)">
-                        <span class="project-task-main"><strong>@task.Title</strong><small>@(IsUnassigned(task) ? "Unassigned" : $"Assigned to {task.AssigneeName}")</small></span>
-                        <span class="project-task-badges"><i class="priority @PriorityClass(task.Priority)">@PriorityLabel(task.Priority)</i><i class="work @WorkClass(task.WorkStatus)">@WorkLabel(task.WorkStatus)</i><i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@AssignmentLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</i></span>
+                        <span class="project-task-main">
+                            <span class="task-title-priority-row">
+                                <strong>@task.Title</strong>
+                                <span class="task-priority-inline @PriorityClass(task.Priority)"><i aria-hidden="true"></i>@PriorityLabel(task.Priority)</span>
+                            </span>
+                            <small>@(IsUnassigned(task) ? "Unassigned" : $"Assigned to {task.AssigneeName}")</small>
+                        </span>
+                        <span class="project-task-badges"><i class="work @WorkClass(task.WorkStatus)">@WorkLabel(task.WorkStatus)</i><i class="assignment @AssignmentClass(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))">@AssignmentLabel(task.AssignmentStatus, task.IsInvited, IsUnassigned(task))</i></span>
                         @if (task.Deadline is { } deadline)
                         {
                             <time datetime="@deadline.ToString("yyyy-MM-dd")">@deadline.ToString("MMM d, yyyy")</time>
