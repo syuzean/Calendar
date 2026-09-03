@@ -8,8 +8,8 @@
              aria-labelledby="task-edit-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header">
             <div>
-                <span class="eyebrow">EDIT TASK</span>
-                <h2 id="task-edit-title">Update task details</h2>
+                <span class="eyebrow">@(Details.WorkItemType == WorkItemType.Bug ? "EDIT BUG" : "EDIT TASK")</span>
+                <h2 id="task-edit-title">Update @(Details.WorkItemType == WorkItemType.Bug ? "bug" : "task") details</h2>
                 <p>Update the title, description, or priority.</p>
             </div>
             <button class="icon-button" aria-label="Close edit task dialog" type="button" @onclick="Cancel">×</button>
@@ -33,9 +33,19 @@
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <div class="task-structured-fields">
                 <TaskMentionEditor @ref="DescriptionEditor" Label="Description" Rows="7" Users="@MentionUsers" EnableImages="true"
-                                   Placeholder="Describe the task, context, and expected outcome"
+                                   Placeholder="@(Details.WorkItemType == WorkItemType.Bug ? "Describe what happened and any useful context." : "Describe the task, context, and expected outcome")"
                                    @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
+            @if (Details.WorkItemType == WorkItemType.Bug)
+            {
+                <BugMetadataEditor @ref="BugEditor"
+                                   InitialCategory="@Details.BugCategory"
+                                   InitialSeverity="@Details.BugSeverity"
+                                   InitialReproducibility="@Details.BugReproducibility"
+                                   InitialFoundInVersion="@Details.FoundInVersion" InitialEnvironment="@Details.BugEnvironment"
+                                   InitialDetails="@Details.BugDetails" InitialSteps="@Details.ReproductionSteps"
+                                   InitialReproductionMarkdown="@Details.ReproductionMarkdown" />
+            }
             @if (Details.Attachments.Count > 0)
             {
                 <div class="field task-existing-attachments">
@@ -86,6 +96,7 @@
     private string TitleError = string.Empty;
     private TaskPriority Priority;
     private Guid? ProjectId;
+    private BugMetadataEditor? BugEditor;
     private TaskAttachmentPicker? AttachmentPicker;
     private TaskMentionEditor? DescriptionEditor;
     private readonly HashSet<Guid> RemovedAttachmentIds = [];
@@ -110,12 +121,21 @@
         await SubmitRequested.InvokeAsync(new UpdateLumaTaskContentRequest(
             Title.Trim(), Description.Trim(), Details.Version, Priority, ProjectId,
             CombinedUploads(), RemovedAttachmentIds.ToArray(),
-            DescriptionMentionUserIds));
+            DescriptionMentionUserIds,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetCategory() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetSeverity() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetReproducibility() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetFoundInVersion() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetEnvironment() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetDetails() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetSteps() : null,
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null));
     }
 
     private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>
         (AttachmentPicker?.GetUploads() ?? [])
         .Concat(DescriptionEditor?.GetImageUploads() ?? [])
+        .Concat(BugEditor?.GetGeneralUploads() ?? [])
         .ToArray();
 
     private void ToggleAttachmentRemoval(Guid attachmentId)

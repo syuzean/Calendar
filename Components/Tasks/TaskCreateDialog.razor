@@ -12,9 +12,9 @@
              aria-labelledby="task-create-dialog-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header">
             <div>
-                <span class="eyebrow">NEW TASK</span>
-                <h2 id="task-create-dialog-title">Create a task</h2>
-                <p class="task-dialog-intro">Capture the essentials and assign the work.</p>
+                <span class="eyebrow">@(ItemType == WorkItemType.Bug ? "NEW BUG" : "NEW TASK")</span>
+                <h2 id="task-create-dialog-title">@(ItemType == WorkItemType.Bug ? "Create a bug" : "Create a task")</h2>
+                <p class="task-dialog-intro">@(ItemType == WorkItemType.Bug ? "Capture the issue now; add deeper QA steps when needed." : "Capture the essentials and assign the work.")</p>
             </div>
             <button class="icon-button" aria-label="Close create task dialog" type="button" @onclick="Cancel">×</button>
         </header>
@@ -27,7 +27,7 @@
             }
             <label class="field title-field">
                 <span>Title</span>
-                <input autofocus placeholder="What needs to be done?" @bind="Title" @bind:event="oninput" />
+                <input autofocus placeholder="@(ItemType == WorkItemType.Bug ? "What's broken?" : "What needs to be done?")" @bind="Title" @bind:event="oninput" />
                 @if (!string.IsNullOrEmpty(TitleError))
                 {
                     <small class="field-error">@TitleError</small>
@@ -36,14 +36,24 @@
 
             <div class="task-structured-fields">
                 <TaskMentionEditor @ref="DescriptionEditor" Label="Description" Rows="6" Users="@MentionUsers" EnableImages="true"
-                                   Placeholder="Describe the task, context, and expected outcome"
+                                   Placeholder="@(ItemType == WorkItemType.Bug ? "Describe what happened and any useful context." : "Describe the task, context, and expected outcome")"
                                    @bind-Value="Description" @bind-MentionUserIds="DescriptionMentionUserIds" />
             </div>
+
+            @if (ItemType == WorkItemType.Bug)
+            {
+                <BugMetadataEditor @ref="BugEditor" />
+            }
 
             <div class="field task-attachments-field">
                 <span>Attachments <em>optional</em></span>
                 <TaskAttachmentPicker @ref="AttachmentPicker" />
             </div>
+
+            @if (ItemType == WorkItemType.Bug)
+            {
+                <div class="bug-work-heading"><span class="eyebrow">WORK</span><small>Plan ownership and delivery separately from impact.</small></div>
+            }
 
             <div class="task-field-grid">
                 <div class="field task-assignee-field" @onclick:stopPropagation="true">
@@ -126,7 +136,7 @@
             <div class="dialog-actions task-dialog-actions">
                 <span class="action-spacer"></span>
                 <button class="secondary-button" type="button" @onclick="Cancel">Cancel</button>
-                <button class="primary-button" type="submit">Create task</button>
+                <button class="primary-button" type="submit">@(ItemType == WorkItemType.Bug ? "Create bug" : "Create task")</button>
             </div>
         </form>
     </section>
@@ -136,6 +146,7 @@
     [Parameter] public EventCallback CancelRequested { get; set; }
     [Parameter] public EventCallback<CreateLumaTaskRequest> Created { get; set; }
     [Parameter] public string? ErrorMessage { get; set; }
+    [Parameter] public WorkItemType ItemType { get; set; } = WorkItemType.Task;
 
     private readonly List<AssigneeOption> Assignees = [];
     private IReadOnlyList<TaskMentionUserOption> MentionUsers = [];
@@ -154,6 +165,7 @@
     private DateOnly? Deadline;
     private TaskPriority Priority = TaskPriority.None;
     private Guid? SelectedProjectId;
+    private BugMetadataEditor? BugEditor;
     private bool ShowAssigneePicker;
     private LumaDateOnlyPicker? DeadlinePicker;
     private TaskProjectPicker? ProjectPicker;
@@ -230,12 +242,22 @@
             SelectedInvitationEmail,
             SelectedProjectId,
             CombinedUploads(),
-            DescriptionMentionUserIds));
+            DescriptionMentionUserIds,
+            ItemType,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetCategory() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetSeverity() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetReproducibility() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetFoundInVersion() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetEnvironment() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetDetails() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetSteps() : null,
+            ItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null));
     }
 
     private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>
         (AttachmentPicker?.GetUploads() ?? [])
         .Concat(DescriptionEditor?.GetImageUploads() ?? [])
+        .Concat(BugEditor?.GetGeneralUploads() ?? [])
         .ToArray();
 
     private Task Cancel() => CancelRequested.InvokeAsync();
@@ -293,6 +315,7 @@
         ShowAssigneePicker = false;
         DeadlinePicker?.Close();
         ProjectPicker?.Close();
+        BugEditor?.ClosePopovers();
     }
 
     private async Task HandleKeyDown(KeyboardEventArgs args)

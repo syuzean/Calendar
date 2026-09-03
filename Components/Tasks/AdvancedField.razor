@@ -1,0 +1,15 @@
+<div class="advanced-field">
+    <button type="button" aria-expanded="@IsOpen" @onclick="Toggle">@(IsOpen ? "−" : "+") @ToggleLabel</button>
+    @if (IsOpen)
+    {
+        <div class="advanced-field-content">@ChildContent</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string ToggleLabel { get; set; } = string.Empty;
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback<bool> IsOpenChanged { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private Task Toggle() => IsOpenChanged.InvokeAsync(!IsOpen);
+}

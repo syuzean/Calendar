@@ -150,6 +150,9 @@
     color: #6844dc;
 }
 
+.bug-work-heading { display:flex; align-items:center; justify-content:space-between; border-top:1px solid #eee8f2; padding-top:12px; }
+.bug-work-heading small { color:#9a929f; font-size:7.5px; }
+
 .task-structured-fields {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

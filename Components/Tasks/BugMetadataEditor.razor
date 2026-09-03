@@ -1,0 +1,197 @@
+@using global::Calendar.Models
+@using global::Calendar.Services
+@inject ITaskMarkdownRenderer MarkdownRenderer
+
+<section class="bug-editor" aria-labelledby="bug-type-heading">
+    <div class="bug-context-heading"><div><span class="eyebrow">BUG CONTEXT</span><h3 id="bug-type-heading">Describe the product problem</h3></div></div>
+
+    <div class="bug-type-field" @onclick:stopPropagation="true">
+        <span>Bug type</span>
+        <button type="button" class="bug-type-trigger" aria-haspopup="listbox" aria-expanded="@ShowTypeMenu" @onclick="ToggleTypeMenu">
+            <span class="bug-type-icon @(Category is null ? "unselected" : null)" aria-hidden="true">@(Category is null ? "?" : CategoryIcon(Category.Value))</span>
+            <strong>@(Category is null ? "Choose bug type" : CategoryLabel(Category.Value))</strong>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+        </button>
+        @if (ShowTypeMenu)
+        {
+            <div class="bug-type-menu" role="listbox" aria-label="Choose bug type">
+                @foreach (var option in Enum.GetValues<BugCategory>())
+                {
+                    <button type="button" role="option" aria-selected="@(Category == option)" class="@(Category == option ? "selected" : null)" @onclick="() => SelectCategory(option)">
+                        <span aria-hidden="true">@CategoryIcon(option)</span><span><strong>@CategoryLabel(option)</strong><small>@CategoryHint(option)</small></span>
+                        @if (Category == option) { <i aria-hidden="true">✓</i> }
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="bug-context-row">
+        <fieldset class="bug-choice-group"><legend>Severity</legend><div class="bug-choice-list severity-list">
+            @foreach (var option in Enum.GetValues<BugSeverity>())
+            { <button type="button" class="severity @SeverityClass(option) @(Severity == option ? "selected" : null)" aria-pressed="@(Severity == option)" @onclick="() => Severity = option"><i aria-hidden="true"></i>@option</button> }
+        </div>@if (Severity is null) { <small class="bug-choice-prompt">Choose one</small> }</fieldset>
+        <fieldset class="bug-choice-group"><legend>Reproducibility</legend><div class="bug-choice-list">
+            @foreach (var option in Enum.GetValues<BugReproducibility>())
+            { <button type="button" class="@(Reproducibility == option ? "selected" : null)" aria-pressed="@(Reproducibility == option)" @onclick="() => Reproducibility = option">@ReproducibilityLabel(option)</button> }
+        </div>@if (Reproducibility is null) { <small class="bug-choice-prompt">Choose one</small> }</fieldset>
+    </div>
+
+    <div class="bug-common-fields">
+        <label class="field"><span>Found in version <em>optional</em></span><input maxlength="80" placeholder="e.g. 2.4.1" @bind="FoundInVersion" /></label>
+        @if (ShowEnvironmentField) { <label class="field"><span>Environment <em>optional</em></span><input maxlength="500" placeholder="Web · Chrome · Windows" @bind="Environment" /></label> }
+        else { <button type="button" class="bug-add-context" @onclick="() => ShowEnvironmentField = true">＋ Add environment</button> }
+    </div>
+
+    @if (Category is { } selectedCategory)
+    {
+    <section class="bug-adaptive-section" aria-label="@CategoryLabel(selectedCategory) details">
+        @switch (Category)
+        {
+            case BugCategory.Functional:
+                <AdvancedField ToggleLabel="Add expected and observed results" @bind-IsOpen="ShowFunctionalOutcomes"><div class="bug-adaptive-grid two"><label class="field"><span>Expected result <em>optional</em></span><textarea rows="3" maxlength="4000" @bind="ExpectedResult"></textarea></label><label class="field"><span>Observed result <em>optional</em></span><textarea rows="3" maxlength="4000" @bind="ObservedResult"></textarea></label></div></AdvancedField>
+                break;
+            case BugCategory.Visual:
+                <div class="bug-visual-evidence"><span aria-hidden="true">▧</span><div><strong>Visual evidence</strong><small>Add screenshots that show the UI problem.</small></div></div>
+                <TaskAttachmentPicker @ref="VisualEvidencePicker" Label="Add visual evidence" Compact="true" />
+                break;
+            case BugCategory.CrashError:
+                <label class="field"><span>Error message</span><textarea rows="2" maxlength="2000" placeholder="Paste the visible error message" @bind="ErrorMessage"></textarea></label>
+                <AdvancedField ToggleLabel="Add stack trace" @bind-IsOpen="ShowCrashStackTrace"><label class="field"><span>Stack trace <em>optional</em></span><textarea rows="5" maxlength="10000" @bind="ErrorDetails"></textarea></label></AdvancedField>
+                <AdvancedField ToggleLabel="Add logs" @bind-IsOpen="ShowCrashLogs"><label class="field"><span>Logs <em>optional</em></span><textarea rows="5" maxlength="10000" @bind="Logs"></textarea></label></AdvancedField>
+                break;
+            case BugCategory.Performance:
+                <div class="bug-adaptive-grid three"><label class="field"><span>Expected duration</span><input maxlength="100" placeholder="e.g. under 2 sec" @bind="ExpectedDuration" /></label><label class="field"><span>Actual duration</span><input maxlength="100" placeholder="e.g. 8.4 sec" @bind="ActualDuration" /></label><label class="field"><span>Attempts <em>optional</em></span><input type="number" min="1" max="100000" @bind="Attempts" /></label></div>
+                break;
+            case BugCategory.ApiIntegration:
+                <div class="bug-api-row"><fieldset class="bug-choice-group"><legend>HTTP method</legend><div class="bug-choice-list">@foreach (var method in HttpMethods) { <button type="button" class="@(HttpMethod == method ? "selected" : null)" @onclick="() => HttpMethod = method">@method</button> }</div></fieldset><label class="field endpoint"><span>Endpoint</span><input maxlength="2000" placeholder="/api/payments" @bind="Endpoint" /></label><label class="field status"><span>Status</span><input type="number" min="100" max="599" placeholder="401" @bind="StatusCode" /></label></div>
+                <AdvancedField ToggleLabel="Add request, response, or correlation ID" @bind-IsOpen="ShowApiAdvanced"><div class="bug-adaptive-grid two"><label class="field"><span>Request <em>optional</em></span><textarea rows="4" maxlength="10000" @bind="ApiRequest"></textarea></label><label class="field"><span>Response <em>optional</em></span><textarea rows="4" maxlength="10000" @bind="ApiResponse"></textarea></label></div><label class="field"><span>Correlation ID <em>optional</em></span><input maxlength="200" @bind="CorrelationId" /></label></AdvancedField>
+                break;
+            case BugCategory.Data:
+                <div class="bug-adaptive-grid two"><label class="field"><span>Entity / record</span><input maxlength="200" @bind="DataEntity" /></label><label class="field"><span>Identifier</span><input maxlength="500" @bind="DataIdentifier" /></label><label class="field"><span>Expected value</span><textarea rows="3" maxlength="4000" @bind="ExpectedValue"></textarea></label><label class="field"><span>Actual value</span><textarea rows="3" maxlength="4000" @bind="ActualValue"></textarea></label></div>
+                break;
+            case BugCategory.Regression:
+                <div class="bug-adaptive-grid two"><label class="field"><span>Last known good version</span><input maxlength="80" placeholder="e.g. 2.3.8" @bind="LastKnownGoodVersion" /></label><label class="field"><span>First broken version</span><input maxlength="80" placeholder="e.g. 2.4.0" @bind="FirstBrokenVersion" /></label></div>
+                break;
+            case BugCategory.Compatibility:
+                <div class="bug-adaptive-grid two"><label class="field"><span>Works on</span><input maxlength="500" placeholder="Chrome 128 · Windows 11" @bind="WorksOn" /></label><label class="field"><span>Fails on</span><input maxlength="500" placeholder="Safari 18 · macOS" @bind="FailsOn" /></label></div>
+                break;
+        }
+    </section>
+    }
+
+    @if (ShowReproduction)
+    {
+        <section class="bug-reproduction" aria-labelledby="reproduction-heading">
+            <header><div><span class="eyebrow">REPRODUCTION</span><h3 id="reproduction-heading">Steps to reproduce</h3></div><div class="bug-reproduction-actions"><button type="button" class="@(PreviewReproduction ? null : "active")" @onclick="() => PreviewReproduction = false">Write</button><button type="button" class="@(PreviewReproduction ? "active" : null)" @onclick="() => PreviewReproduction = true">Preview</button>@if (Category is { } reproCategory && !IsPrimaryReproduction(reproCategory)) { <button type="button" class="bug-collapse" @onclick="() => ShowReproduction = false">Hide</button> }</div></header>
+            <div class="bug-reproduction-write" hidden="@PreviewReproduction">
+                <TaskMentionEditor @ref="ReproductionEditor" Label="" HelpText="Markdown · images" Rows="8" MaxLength="30000"
+                    EnableImages="true" EnableMentions="false" Placeholder="1. Open the app&#10;2. Sign in&#10;3. Click Pay"
+                    Value="@ReproductionMarkdown" ValueChanged="SetReproductionMarkdown" />
+            </div>
+            @if (PreviewReproduction && ParsedSteps.Count == 0)
+            {
+                <p class="bug-step-empty">Start with a numbered list, for example: <strong>1. Open the app</strong></p>
+            }
+            else if (PreviewReproduction)
+            {
+                <ol class="bug-reproduction-preview">
+                    @foreach (var step in ParsedSteps)
+                    {
+                        var key = BugReproductionMarkdown.MatchKey(step.Markdown);
+                        var selected = IsSelectedFailure(key);
+                        <li class="@(selected ? "primary-failure" : null)">
+                            <span class="bug-step-number">@(step.Position + 1)</span>
+                            <div class="bug-step-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(step.Markdown))</div>
+                            <button type="button" class="bug-mark-failure @(selected ? "active" : null)" @onclick="() => MarkPrimary(key)">@(selected ? "🐞 BUG HERE" : "Mark bug here")</button>
+                        </li>
+                    }
+                </ol>
+            }
+        </section>
+    }
+    else if (Category is { } optionalCategory) { <button type="button" class="bug-add-reproduction" @onclick="OpenReproduction">＋ Add reproduction steps <small>optional for @CategoryLabel(optionalCategory)</small></button> }
+</section>
+
+@code {
+    [Parameter] public BugCategory? InitialCategory { get; set; }
+    [Parameter] public BugSeverity? InitialSeverity { get; set; }
+    [Parameter] public BugReproducibility? InitialReproducibility { get; set; }
+    [Parameter] public string InitialFoundInVersion { get; set; } = string.Empty;
+    [Parameter] public string InitialEnvironment { get; set; } = string.Empty;
+    [Parameter] public BugAdaptiveDetailsInput? InitialDetails { get; set; }
+    [Parameter] public IReadOnlyList<BugReproductionStepDetails>? InitialSteps { get; set; }
+    [Parameter] public string InitialReproductionMarkdown { get; set; } = string.Empty;
+
+    private bool initialized, ShowTypeMenu, ShowEnvironmentField, ShowReproduction, ShowFunctionalOutcomes, ShowCrashStackTrace, ShowCrashLogs, ShowApiAdvanced;
+    private BugCategory? Category; private BugSeverity? Severity; private BugReproducibility? Reproducibility;
+    private string FoundInVersion = "", Environment = "", ExpectedResult = "", ObservedResult = "", ErrorMessage = "", ErrorDetails = "", Logs = "";
+    private string ExpectedDuration = "", ActualDuration = "", HttpMethod = "GET", Endpoint = ""; private int? Attempts, StatusCode;
+    private string ApiRequest = "", ApiResponse = "", CorrelationId = "", DataEntity = "", DataIdentifier = "", ExpectedValue = "", ActualValue = "";
+    private string LastKnownGoodVersion = "", FirstBrokenVersion = "", WorksOn = "", FailsOn = "";
+    private string ReproductionMarkdown = ""; private string? PrimaryFailureKey; private bool PreviewReproduction;
+    private TaskMentionEditor? ReproductionEditor; private TaskAttachmentPicker? VisualEvidencePicker;
+    private static readonly string[] HttpMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+    protected override void OnParametersSet()
+    {
+        if (initialized) return; initialized = true; Category = InitialCategory; Severity = InitialSeverity; Reproducibility = InitialReproducibility;
+        FoundInVersion = InitialFoundInVersion; Environment = InitialEnvironment; ShowEnvironmentField = !string.IsNullOrWhiteSpace(Environment); var d = InitialDetails;
+        ExpectedResult = d?.ExpectedResult ?? ""; ObservedResult = d?.ObservedResult ?? ""; ErrorMessage = d?.ErrorMessage ?? ""; ErrorDetails = d?.ErrorDetails ?? ""; Logs = d?.Logs ?? "";
+        ExpectedDuration = d?.ExpectedDuration ?? ""; ActualDuration = d?.ActualDuration ?? ""; Attempts = d?.Attempts; HttpMethod = d?.HttpMethod ?? "GET"; Endpoint = d?.Endpoint ?? ""; StatusCode = d?.StatusCode;
+        ApiRequest = d?.ApiRequest ?? ""; ApiResponse = d?.ApiResponse ?? ""; CorrelationId = d?.CorrelationId ?? ""; DataEntity = d?.DataEntity ?? ""; DataIdentifier = d?.DataIdentifier ?? "";
+        ExpectedValue = d?.ExpectedValue ?? ""; ActualValue = d?.ActualValue ?? ""; LastKnownGoodVersion = d?.LastKnownGoodVersion ?? ""; FirstBrokenVersion = d?.FirstBrokenVersion ?? ""; WorksOn = d?.WorksOn ?? ""; FailsOn = d?.FailsOn ?? "";
+        ReproductionMarkdown = string.IsNullOrWhiteSpace(InitialReproductionMarkdown) ? BugReproductionMarkdown.FromLegacySteps(InitialSteps) : InitialReproductionMarkdown;
+        var primary = InitialSteps?.Where(step => step.IsPrimaryFailure).ToArray() ?? [];
+        if (primary.Length == 1)
+        {
+            var legacyKey = BugReproductionMarkdown.MatchKey(primary[0].Content);
+            var parsedMatches = BugReproductionMarkdown.Parse(ReproductionMarkdown)
+                .Where(step => BugReproductionMarkdown.MatchKey(step.Markdown).Contains(legacyKey, StringComparison.Ordinal))
+                .ToArray();
+            if (parsedMatches.Length == 1) PrimaryFailureKey = BugReproductionMarkdown.MatchKey(parsedMatches[0].Markdown);
+        }
+        ShowReproduction = Category is { } category && (IsPrimaryReproduction(category) || !string.IsNullOrWhiteSpace(ReproductionMarkdown));
+        ShowFunctionalOutcomes = !string.IsNullOrWhiteSpace(ExpectedResult) || !string.IsNullOrWhiteSpace(ObservedResult);
+        ShowCrashStackTrace = !string.IsNullOrWhiteSpace(ErrorDetails); ShowCrashLogs = !string.IsNullOrWhiteSpace(Logs);
+        ShowApiAdvanced = !string.IsNullOrWhiteSpace(ApiRequest) || !string.IsNullOrWhiteSpace(ApiResponse) || !string.IsNullOrWhiteSpace(CorrelationId);
+    }
+
+    public BugCategory? GetCategory() => Category; public BugSeverity? GetSeverity() => Severity; public BugReproducibility? GetReproducibility() => Reproducibility;
+    public string GetFoundInVersion() => FoundInVersion; public string GetEnvironment() => Environment;
+    public IReadOnlyList<TaskAttachmentUpload> GetGeneralUploads() => VisualEvidencePicker?.GetUploads() ?? [];
+    public BugAdaptiveDetailsInput GetDetails() => new(ExpectedResult, ObservedResult, ErrorMessage, ErrorDetails, ExpectedDuration, ActualDuration, Attempts, HttpMethod, Endpoint, StatusCode, ApiRequest, ApiResponse, CorrelationId, DataEntity, DataIdentifier, ExpectedValue, ActualValue, LastKnownGoodVersion, FirstBrokenVersion, WorksOn, FailsOn, Logs);
+    public string GetReproductionMarkdown() => ReproductionMarkdown;
+    public IReadOnlyList<BugReproductionStepInput> GetSteps()
+    {
+        var parsed = ParsedSteps; var uploads = ReproductionEditor?.GetImageUploads() ?? [];
+        return parsed.Select(step =>
+        {
+            var key = BugReproductionMarkdown.MatchKey(step.Markdown);
+            var existing = (InitialSteps ?? []).Where(item => BugReproductionMarkdown.MatchKey(item.Content) == key).ToArray();
+            if (existing.Length == 0)
+                existing = (InitialSteps ?? []).Where(item => item.Images.Any(image => step.Markdown.Contains(image.Url, StringComparison.Ordinal))).ToArray();
+            var stepUploads = uploads.Where(upload => upload.InlineToken is { } token && step.Markdown.Contains(TaskMarkdownImageSyntax.CreatePendingUrl(token), StringComparison.Ordinal)).ToArray();
+            return new BugReproductionStepInput(existing.Length == 1 ? existing[0].Id : null, step.Markdown, null, IsSelectedFailure(key), stepUploads);
+        }).ToArray();
+    }
+    public void ClosePopovers() => ShowTypeMenu = false;
+    private void ToggleTypeMenu() => ShowTypeMenu = !ShowTypeMenu;
+    private IReadOnlyList<ParsedBugReproductionStep> ParsedSteps => BugReproductionMarkdown.Parse(ReproductionMarkdown);
+    private void SelectCategory(BugCategory value) { Category = value; ShowTypeMenu = false; ShowReproduction = IsPrimaryReproduction(value) || !string.IsNullOrWhiteSpace(ReproductionMarkdown); }
+    private void OpenReproduction() => ShowReproduction = true;
+    private void SetReproductionMarkdown(string value)
+    {
+        ReproductionMarkdown = value;
+        if (PrimaryFailureKey is { } key && ParsedSteps.Count(step => BugReproductionMarkdown.MatchKey(step.Markdown) == key) != 1)
+            PrimaryFailureKey = null;
+    }
+    private bool IsSelectedFailure(string key) => PrimaryFailureKey == key && ParsedSteps.Count(step => BugReproductionMarkdown.MatchKey(step.Markdown) == key) == 1;
+    private void MarkPrimary(string key) => PrimaryFailureKey = IsSelectedFailure(key) ? null : key;
+    private static bool IsPrimaryReproduction(BugCategory value) => value is BugCategory.Functional or BugCategory.Regression or BugCategory.Compatibility;
+    private static string CategoryLabel(BugCategory value) => value switch { BugCategory.Visual => "Visual / UI", BugCategory.CrashError => "Crash / Error", BugCategory.ApiIntegration => "API / Integration", _ => value.ToString() };
+    private static string CategoryIcon(BugCategory value) => value switch { BugCategory.Visual => "◉", BugCategory.CrashError => "△", BugCategory.Performance => "◷", BugCategory.ApiIntegration => "⌘", BugCategory.Data => "▤", BugCategory.Regression => "↶", BugCategory.Compatibility => "▣", _ => "≡" };
+    private static string CategoryHint(BugCategory value) => value switch { BugCategory.Visual => "Layout, styling, or visual behavior", BugCategory.CrashError => "Crash, exception, or visible error", BugCategory.Performance => "Slow or resource-heavy behavior", BugCategory.ApiIntegration => "Endpoint or integration failure", BugCategory.Data => "Incorrect or missing data", BugCategory.Regression => "Previously working behavior broke", BugCategory.Compatibility => "Platform-specific behavior", _ => "Product behavior is incorrect" };
+    private static string ReproducibilityLabel(BugReproducibility value) => value == BugReproducibility.CannotReproduce ? "Cannot reproduce" : value.ToString(); private static string SeverityClass(BugSeverity value) => value.ToString().ToLowerInvariant();
+
+}

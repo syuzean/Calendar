@@ -15,6 +15,278 @@ namespace Calendar.Tests;
 public sealed class TaskStoreTests
 {
     [Fact]
+    public async Task CreateBug_PersistsMetadataAndReturnsItInDetails()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            Title = "Checkout crashes",
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.CrashError,
+            BugSeverity = BugSeverity.Critical,
+            BugReproducibility = BugReproducibility.Always,
+            FoundInVersion = " 2.4.1 ",
+            BugEnvironment = " Web · Chrome · Windows ",
+            BugDetails = new BugAdaptiveDetailsInput(
+                ErrorMessage: "Application stopped.",
+                ErrorDetails: "at Checkout.Submit()",
+                Logs: "request-id=abc123")
+        };
+
+        var taskId = await store.CreateAsync(request);
+
+        await using var db = fixture.CreateDbContext();
+        var saved = await db.Tasks.SingleAsync(item => item.Id == taskId);
+        Assert.Equal(WorkItemType.Bug, saved.WorkItemType);
+        Assert.Equal(BugCategory.CrashError, saved.BugCategory);
+        Assert.Equal(BugSeverity.Critical, saved.BugSeverity);
+        Assert.Equal(BugReproducibility.Always, saved.BugReproducibility);
+        Assert.Equal("2.4.1", saved.FoundInVersion);
+        Assert.Equal("Web · Chrome · Windows", saved.BugEnvironment);
+
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+        Assert.Equal(WorkItemType.Bug, details.WorkItemType);
+        Assert.Equal(BugCategory.CrashError, details.BugCategory);
+        Assert.Equal(BugSeverity.Critical, details.BugSeverity);
+        Assert.Equal("2.4.1", details.FoundInVersion);
+        Assert.Equal("at Checkout.Submit()", details.BugDetails!.ErrorDetails);
+        Assert.Equal("request-id=abc123", details.BugDetails.Logs);
+    }
+
+    [Fact]
+    public async Task CreateBug_RejectsMissingRequiredClassification()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(
+                NewRequest(fixture.Assignee.Id) with { WorkItemType = WorkItemType.Bug }));
+
+        Assert.Contains("bug category", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("bug severity", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reproduces", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await AssertNoTasksAsync(fixture);
+    }
+
+    [Fact]
+    public async Task CreateTask_RejectsBugMetadata()
+    {
+        var fixture = await TestFixture.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(
+                NewRequest(fixture.Assignee.Id) with { BugSeverity = BugSeverity.High }));
+
+        Assert.Contains("only be saved for Bug", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await AssertNoTasksAsync(fixture);
+    }
+
+    [Fact]
+    public async Task EditBug_UpdatesMetadataAndConcurrencyVersion()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.Medium,
+            BugReproducibility = BugReproducibility.Sometimes
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+
+        var updated = await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            before.Title,
+            before.Description,
+            before.Version,
+            before.Priority,
+            before.ProjectId,
+            DescriptionMentionUserIds: before.Mentions.Select(item => item.UserId).ToArray(),
+            BugCategory: BugCategory.Regression,
+            BugSeverity: BugSeverity.High,
+            BugReproducibility: BugReproducibility.Always,
+            FoundInVersion: "3.0.0",
+            BugEnvironment: "Production"));
+
+        Assert.Equal(BugCategory.Regression, updated.BugCategory);
+        Assert.Equal(BugSeverity.High, updated.BugSeverity);
+        Assert.Equal("3.0.0", updated.FoundInVersion);
+        Assert.NotEqual(before.Version, updated.Version);
+    }
+
+    [Fact]
+    public async Task CreateBug_PersistsAdaptiveContextOrderedStepsAndStepImage()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var image = ImageUpload("failure.png", "image/png", PngBytes(21, 22, 23));
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.High,
+            BugReproducibility = BugReproducibility.Always,
+            BugDetails = new BugAdaptiveDetailsInput(
+                ExpectedResult: "Payment completes.",
+                ObservedResult: "401 Unauthorized."),
+            ReproductionSteps =
+            [
+                new(null, "Open **POS**", null, false),
+                new(null, "Complete first payment", null, false),
+                new(null, "Start second payment", null, false),
+                new(null, "Click Pay", "401 Unauthorized", true, [image]),
+                new(null, "Capture request ID", null, false)
+            ]
+        });
+
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+        var reproductionSteps = details.ReproductionSteps!;
+        Assert.Contains("1. Open **POS**", details.ReproductionMarkdown);
+        Assert.Contains("![failure.png]", details.ReproductionMarkdown);
+        Assert.Equal("Payment completes.", details.BugDetails!.ExpectedResult);
+        Assert.Equal("401 Unauthorized.", details.BugDetails.ObservedResult);
+        Assert.Equal(["Open **POS**", "Complete first payment", "Start second payment", "Click Pay", "Capture request ID"], reproductionSteps.Select(step => step.Content));
+        Assert.False(reproductionSteps[0].IsPrimaryFailure);
+        Assert.True(reproductionSteps[3].IsPrimaryFailure);
+        Assert.Single(reproductionSteps, step => step.IsPrimaryFailure);
+        var stepImage = Assert.Single(reproductionSteps[3].Images);
+        Assert.Empty(details.Attachments);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(reproductionSteps[3].Id,
+            (await db.TaskAttachments.SingleAsync(attachment => attachment.Id == stepImage.Id)).BugReproductionStepId);
+    }
+
+    [Fact]
+    public async Task EditBug_ReordersStepsAndKeepsOnePrimaryFailure()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Regression,
+            BugSeverity = BugSeverity.Medium,
+            BugReproducibility = BugReproducibility.Sometimes,
+            BugDetails = new BugAdaptiveDetailsInput(LastKnownGoodVersion: "2.3.8", FirstBrokenVersion: "2.4.0"),
+            ReproductionSteps = [new(null, "First", null, false), new(null, "Second", null, true), new(null, "Delete me", null, false)]
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+        var beforeSteps = before.ReproductionSteps!;
+
+        var updated = await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            before.Title, before.Description, before.Version, before.Priority, before.ProjectId,
+            DescriptionMentionUserIds: before.Mentions.Select(item => item.UserId).ToArray(),
+            BugCategory: before.BugCategory, BugSeverity: before.BugSeverity,
+            BugReproducibility: before.BugReproducibility, FoundInVersion: before.FoundInVersion,
+            BugEnvironment: before.BugEnvironment, BugDetails: before.BugDetails,
+            ReproductionSteps:
+            [
+                new(beforeSteps[1].Id, "Second", null, false),
+                new(beforeSteps[0].Id, "First", "Failure is here", true)
+            ]));
+
+        var updatedSteps = updated.ReproductionSteps!;
+        Assert.Equal(["Second", "First"], updatedSteps.Select(step => step.Content));
+        Assert.False(updatedSteps[0].IsPrimaryFailure);
+        Assert.True(updatedSteps[1].IsPrimaryFailure);
+        Assert.Equal("Failure is here", updatedSteps[1].ObservedResult);
+
+        await using var db = fixture.CreateDbContext();
+        Assert.False(await db.BugReproductionSteps.AnyAsync(step => step.Id == beforeSteps[2].Id));
+    }
+
+    [Fact]
+    public async Task CreateBug_RejectsMultiplePrimaryFailureSteps()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var request = NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Compatibility,
+            BugSeverity = BugSeverity.Low,
+            BugReproducibility = BugReproducibility.Always,
+            ReproductionSteps = [new(null, "One", null, true), new(null, "Two", null, true)]
+        };
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            fixture.CreateStore(fixture.Creator).CreateAsync(request));
+
+        Assert.Contains("Only one reproduction step", exception.Message);
+        await AssertNoTasksAsync(fixture);
+    }
+
+    [Fact]
+    public async Task ReproductionMarkdown_IsCanonicalAndClearsRemovedFailureStep()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.High,
+            BugReproducibility = BugReproducibility.Always,
+            ReproductionMarkdown = "1. Open **POS**\n2. Click Pay",
+            ReproductionSteps = [new(null, "Open **POS**", null, false), new(null, "Click Pay", null, true)]
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+        var beforeSteps = Assert.IsAssignableFrom<IReadOnlyList<BugReproductionStepDetails>>(before.ReproductionSteps);
+        Assert.Equal(["Open **POS**", "Click Pay"], beforeSteps.Select(step => step.Content));
+        Assert.True(beforeSteps[1].IsPrimaryFailure);
+
+        var reordered = await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            before.Title, before.Description, before.Version, before.Priority, before.ProjectId,
+            DescriptionMentionUserIds: before.Mentions.Select(item => item.UserId).ToArray(),
+            BugCategory: before.BugCategory, BugSeverity: before.BugSeverity,
+            BugReproducibility: before.BugReproducibility, FoundInVersion: before.FoundInVersion,
+            BugEnvironment: before.BugEnvironment, BugDetails: before.BugDetails,
+            ReproductionMarkdown: "1. Click Pay\n2. Open **POS**"));
+        var reorderedSteps = Assert.IsAssignableFrom<IReadOnlyList<BugReproductionStepDetails>>(reordered.ReproductionSteps);
+        Assert.Equal(["Click Pay", "Open **POS**"], reorderedSteps.Select(step => step.Content));
+        Assert.True(reorderedSteps[0].IsPrimaryFailure);
+
+        var updated = await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            reordered.Title, reordered.Description, reordered.Version, reordered.Priority, reordered.ProjectId,
+            DescriptionMentionUserIds: reordered.Mentions.Select(item => item.UserId).ToArray(),
+            BugCategory: reordered.BugCategory, BugSeverity: reordered.BugSeverity,
+            BugReproducibility: reordered.BugReproducibility, FoundInVersion: reordered.FoundInVersion,
+            BugEnvironment: reordered.BugEnvironment, BugDetails: reordered.BugDetails,
+            ReproductionMarkdown: "1. Open **POS**"));
+
+        Assert.Equal("1. Open **POS**", updated.ReproductionMarkdown);
+        var updatedSteps = Assert.IsAssignableFrom<IReadOnlyList<BugReproductionStepDetails>>(updated.ReproductionSteps);
+        Assert.Single(updatedSteps);
+        Assert.False(updatedSteps[0].IsPrimaryFailure);
+    }
+
+    [Fact]
+    public async Task ReproductionMarkdown_ResolvesPastedImageThroughTaskAttachmentStorage()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var token = Guid.NewGuid().ToString("N");
+        var upload = ImageUpload("error.png", "image/png", PngBytes(31, 32, 33)) with { InlineToken = token };
+        var pendingImage = TaskMarkdownImageSyntax.CreateMarkdown(upload.FileName, token);
+        var markdown = $"1. Click Pay\n\n   {pendingImage}";
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.Critical,
+            BugReproducibility = BugReproducibility.Always,
+            ReproductionMarkdown = markdown,
+            ReproductionSteps = [new(null, $"Click Pay\n\n   {pendingImage}", null, true, [upload])]
+        });
+
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+        var image = Assert.Single(Assert.Single(details.ReproductionSteps!).Images);
+        Assert.Contains(image.Url, details.ReproductionMarkdown);
+        Assert.Contains(image.Url, details.ReproductionSteps![0].Content);
+        Assert.DoesNotContain("luma-task-image:", details.ReproductionMarkdown);
+    }
+
+    [Fact]
     public async Task AuthenticatedUser_CanCreateTask()
     {
         var fixture = await TestFixture.CreateAsync();

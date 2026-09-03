@@ -17,7 +17,16 @@ public sealed record CreateLumaTaskRequest(
     string? AssigneeEmail = null,
     Guid? ProjectId = null,
     IReadOnlyList<TaskAttachmentUpload>? Attachments = null,
-    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null);
+    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null,
+    WorkItemType WorkItemType = WorkItemType.Task,
+    BugCategory? BugCategory = null,
+    BugSeverity? BugSeverity = null,
+    BugReproducibility? BugReproducibility = null,
+    string? FoundInVersion = null,
+    string? BugEnvironment = null,
+    BugAdaptiveDetailsInput? BugDetails = null,
+    IReadOnlyList<BugReproductionStepInput>? ReproductionSteps = null,
+    string? ReproductionMarkdown = null);
 
 public sealed record RequestTaskDeadlineChange(
     DateOnly? ProposedDeadline,
@@ -31,7 +40,15 @@ public sealed record UpdateLumaTaskContentRequest(
     Guid? ProjectId = null,
     IReadOnlyList<TaskAttachmentUpload>? NewAttachments = null,
     IReadOnlyCollection<Guid>? RemovedAttachmentIds = null,
-    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null);
+    IReadOnlyCollection<Guid>? DescriptionMentionUserIds = null,
+    BugCategory? BugCategory = null,
+    BugSeverity? BugSeverity = null,
+    BugReproducibility? BugReproducibility = null,
+    string? FoundInVersion = null,
+    string? BugEnvironment = null,
+    BugAdaptiveDetailsInput? BugDetails = null,
+    IReadOnlyList<BugReproductionStepInput>? ReproductionSteps = null,
+    string? ReproductionMarkdown = null);
 
 public sealed record TaskAttachmentUpload(
     string FileName,
@@ -39,6 +56,38 @@ public sealed record TaskAttachmentUpload(
     long Length,
     Func<Stream> OpenReadStream,
     string? InlineToken = null);
+
+public sealed record BugAdaptiveDetailsInput(
+    string? ExpectedResult = null,
+    string? ObservedResult = null,
+    string? ErrorMessage = null,
+    string? ErrorDetails = null,
+    string? ExpectedDuration = null,
+    string? ActualDuration = null,
+    int? Attempts = null,
+    string? HttpMethod = null,
+    string? Endpoint = null,
+    int? StatusCode = null,
+    string? ApiRequest = null,
+    string? ApiResponse = null,
+    string? CorrelationId = null,
+    string? DataEntity = null,
+    string? DataIdentifier = null,
+    string? ExpectedValue = null,
+    string? ActualValue = null,
+    string? LastKnownGoodVersion = null,
+    string? FirstBrokenVersion = null,
+    string? WorksOn = null,
+    string? FailsOn = null,
+    string? Logs = null);
+
+public sealed record BugReproductionStepInput(
+    Guid? Id,
+    string Content,
+    string? ObservedResult,
+    bool IsPrimaryFailure,
+    IReadOnlyList<TaskAttachmentUpload>? NewImages = null,
+    IReadOnlyCollection<Guid>? RemovedImageIds = null);
 
 public sealed record TaskAttachmentDetails(
     Guid Id,
@@ -49,6 +98,14 @@ public sealed record TaskAttachmentDetails(
 {
     public string Url => $"/task-attachments/{Id:D}";
 }
+
+public sealed record BugReproductionStepDetails(
+    Guid Id,
+    int Position,
+    string Content,
+    string ObservedResult,
+    bool IsPrimaryFailure,
+    IReadOnlyList<TaskAttachmentDetails> Images);
 
 public static class TaskAttachmentRules
 {
@@ -176,7 +233,16 @@ public sealed record LumaTaskDetails(
     bool CanComment,
     bool CanTake,
     IReadOnlyList<TaskAttachmentDetails> Attachments,
-    IReadOnlyList<TaskMentionDetails> Mentions);
+    IReadOnlyList<TaskMentionDetails> Mentions,
+    WorkItemType WorkItemType = WorkItemType.Task,
+    BugCategory? BugCategory = null,
+    BugSeverity? BugSeverity = null,
+    BugReproducibility? BugReproducibility = null,
+    string FoundInVersion = "",
+    string BugEnvironment = "",
+    BugAdaptiveDetailsInput? BugDetails = null,
+    IReadOnlyList<BugReproductionStepDetails>? ReproductionSteps = null,
+    string ReproductionMarkdown = "");
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -240,6 +306,13 @@ public sealed class TaskStore(
             request.Description,
             request.DescriptionMentionUserIds);
 
+        var reproductionMarkdown = request.WorkItemType == WorkItemType.Bug
+            ? NormalizeReproductionMarkdown(request.ReproductionMarkdown)
+            : null;
+        var reproductionInputs = request.WorkItemType == WorkItemType.Bug
+            ? ReconcileMarkdownSteps(reproductionMarkdown, request.ReproductionSteps, [])
+            : [];
+
         var entity = new LumaTask
         {
             Id = Guid.NewGuid(),
@@ -254,13 +327,38 @@ public sealed class TaskStore(
             AssignmentStatus = TaskAssignmentStatus.Pending,
             WorkStatus = TaskWorkStatus.ToDo,
             Priority = request.Priority,
+            WorkItemType = request.WorkItemType,
+            BugCategory = request.BugCategory,
+            BugSeverity = request.BugSeverity,
+            BugReproducibility = request.BugReproducibility,
+            FoundInVersion = NormalizeOptional(request.FoundInVersion),
+            BugEnvironment = NormalizeOptional(request.BugEnvironment),
+            BugDetails = request.WorkItemType == WorkItemType.Bug
+                ? ToBugDetailsEntity(request.BugDetails)
+                : null,
             AcceptedAt = null,
             Version = Guid.NewGuid()
         };
+        if (entity.BugDetails is not null) entity.BugDetails.ReproductionMarkdown = reproductionMarkdown;
         foreach (var mention in resolvedMentions.Mentions)
         {
             mention.TaskId = entity.Id;
             entity.Mentions.Add(mention);
+        }
+        if (request.WorkItemType == WorkItemType.Bug)
+        {
+            foreach (var (step, index) in reproductionInputs.Select((step, index) => (step, index)))
+            {
+                entity.ReproductionSteps.Add(new BugReproductionStep
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = entity.Id,
+                    Position = index,
+                    Content = step.Content.Trim(),
+                    ObservedResult = NormalizeOptional(step.ObservedResult),
+                    IsPrimaryFailure = step.IsPrimaryFailure
+                });
+            }
         }
 
         db.Tasks.Add(entity);
@@ -296,14 +394,39 @@ public sealed class TaskStore(
             creatorId,
             $"{maker.Name} mentioned you in “{entity.Title}”.",
             resolvedMentions.Mentions.Select(item => item.UserId));
-        var storedAttachments = await StoreAttachmentsAsync(
-            entity.Id, creatorId, request.Attachments, 0, 0);
-        entity.Description = TaskMarkdownImageSyntax.ResolvePendingUrls(
-            entity.Description, request.Attachments, storedAttachments);
-        foreach (var attachment in storedAttachments)
-            entity.Attachments.Add(attachment);
+        var storedAttachments = new List<TaskAttachment>();
         try
         {
+            var genericAttachments = await StoreAttachmentsAsync(
+                entity.Id, creatorId, request.Attachments, 0, 0);
+            storedAttachments.AddRange(genericAttachments);
+            entity.Description = TaskMarkdownImageSyntax.ResolvePendingUrls(
+                entity.Description, request.Attachments, genericAttachments);
+            foreach (var attachment in genericAttachments)
+                entity.Attachments.Add(attachment);
+
+            var storedCount = genericAttachments.Count;
+            var storedSize = genericAttachments.Sum(item => item.SizeBytes);
+            var requestedSteps = reproductionInputs;
+            var reproductionUploads = new List<TaskAttachmentUpload>();
+            var reproductionStored = new List<TaskAttachment>();
+            for (var index = 0; index < entity.ReproductionSteps.Count; index++)
+            {
+                var step = entity.ReproductionSteps.ElementAt(index);
+                var images = await StoreAttachmentsAsync(
+                    entity.Id, creatorId, requestedSteps[index].NewImages, storedCount, storedSize, step.Id);
+                storedAttachments.AddRange(images);
+                storedCount += images.Count;
+                storedSize += images.Sum(item => item.SizeBytes);
+                foreach (var image in images)
+                    entity.Attachments.Add(image);
+                step.Content = TaskMarkdownImageSyntax.ResolvePendingUrls(step.Content, requestedSteps[index].NewImages, images);
+                reproductionUploads.AddRange(requestedSteps[index].NewImages ?? []);
+                reproductionStored.AddRange(images);
+            }
+            if (entity.BugDetails is not null)
+                entity.BugDetails.ReproductionMarkdown = TaskMarkdownImageSyntax.ResolvePendingUrls(
+                    entity.BugDetails.ReproductionMarkdown ?? string.Empty, reproductionUploads, reproductionStored);
             await db.SaveChangesAsync();
         }
         catch
@@ -481,6 +604,49 @@ public sealed class TaskStore(
                 item.AssignmentStatus,
                 item.WorkStatus,
                 item.Priority,
+                item.WorkItemType,
+                item.BugCategory,
+                item.BugSeverity,
+                item.BugReproducibility,
+                item.FoundInVersion,
+                item.BugEnvironment,
+                BugDetails = item.BugDetails == null ? null : new BugAdaptiveDetailsInput(
+                    item.BugDetails.ExpectedResult,
+                    item.BugDetails.ObservedResult,
+                    item.BugDetails.ErrorMessage,
+                    item.BugDetails.ErrorDetails,
+                    item.BugDetails.ExpectedDuration,
+                    item.BugDetails.ActualDuration,
+                    item.BugDetails.Attempts,
+                    item.BugDetails.HttpMethod,
+                    item.BugDetails.Endpoint,
+                    item.BugDetails.StatusCode,
+                    item.BugDetails.ApiRequest,
+                    item.BugDetails.ApiResponse,
+                    item.BugDetails.CorrelationId,
+                    item.BugDetails.DataEntity,
+                    item.BugDetails.DataIdentifier,
+                    item.BugDetails.ExpectedValue,
+                    item.BugDetails.ActualValue,
+                    item.BugDetails.LastKnownGoodVersion,
+                    item.BugDetails.FirstBrokenVersion,
+                    item.BugDetails.WorksOn,
+                    item.BugDetails.FailsOn,
+                    item.BugDetails.Logs),
+                ReproductionMarkdown = item.BugDetails == null ? null : item.BugDetails.ReproductionMarkdown,
+                ReproductionSteps = item.ReproductionSteps
+                    .OrderBy(step => step.Position)
+                    .Select(step => new BugReproductionStepDetails(
+                        step.Id,
+                        step.Position,
+                        step.Content,
+                        step.ObservedResult ?? string.Empty,
+                        step.IsPrimaryFailure,
+                        step.Attachments.OrderBy(image => image.CreatedAt)
+                            .Select(image => new TaskAttachmentDetails(
+                                image.Id, image.OriginalFileName, image.ContentType, image.SizeBytes, image.CreatedAt))
+                            .ToList()))
+                    .ToList(),
                 item.AcceptedAt,
                 item.RequestedDeadline,
                 item.DeadlineChangeComment,
@@ -492,6 +658,7 @@ public sealed class TaskStore(
                         mention.User!.Name))
                     .ToList(),
                 Attachments = item.Attachments
+                    .Where(attachment => attachment.BugReproductionStepId == null)
                     .OrderBy(attachment => attachment.CreatedAt)
                     .Select(attachment => new TaskAttachmentDetails(
                         attachment.Id,
@@ -531,7 +698,18 @@ public sealed class TaskStore(
             task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
             task.AssigneeId is null && !task.HasInvitation,
             task.Attachments,
-            task.Mentions);
+            task.Mentions,
+            task.WorkItemType,
+            task.BugCategory,
+            task.BugSeverity,
+            task.BugReproducibility,
+            task.FoundInVersion ?? string.Empty,
+            task.BugEnvironment ?? string.Empty,
+            task.BugDetails,
+            task.ReproductionSteps,
+            string.IsNullOrWhiteSpace(task.ReproductionMarkdown)
+                ? BugReproductionMarkdown.FromLegacySteps(task.ReproductionSteps)
+                : task.ReproductionMarkdown);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -718,8 +896,36 @@ public sealed class TaskStore(
 
         if (task.CreatorId != currentUserId)
             throw new UnauthorizedAccessException("Only the Task Maker can edit this task.");
+        if (task.WorkItemType != WorkItemType.Bug && request.ReproductionMarkdown is not null)
+            throw new ValidationException("Reproduction steps can only be saved for Bug work items.");
 
         ValidateContentUpdate(request);
+        var bugErrors = new List<string>();
+        ValidateBugMetadata(
+            bugErrors,
+            task.WorkItemType,
+            request.BugCategory,
+            request.BugSeverity,
+            request.BugReproducibility,
+            request.FoundInVersion,
+            request.BugEnvironment);
+        var effectiveBugDetails = task.WorkItemType == WorkItemType.Bug
+            ? request.BugDetails ?? ToBugDetailsInput(task.BugDetails)
+            : null;
+        var effectiveReproductionMarkdown = task.WorkItemType == WorkItemType.Bug
+            ? NormalizeReproductionMarkdown(request.ReproductionMarkdown ?? task.BugDetails?.ReproductionMarkdown ??
+                BugReproductionMarkdown.FromLegacySteps(task.ReproductionSteps
+                    .OrderBy(step => step.Position)
+                    .Select(ToReproductionStepDetails)))
+            : null;
+        var effectiveReproductionSteps = task.WorkItemType == WorkItemType.Bug
+            ? ReconcileMarkdownSteps(effectiveReproductionMarkdown, request.ReproductionSteps,
+                task.ReproductionSteps.OrderBy(step => step.Position).Select(ToReproductionStepDetails).ToArray())
+            : null;
+        ValidateAdaptiveBugDetails(
+            bugErrors, task.WorkItemType, effectiveBugDetails, effectiveReproductionSteps, isCreate: false);
+        if (bugErrors.Count > 0)
+            throw new ValidationException(string.Join(" ", bugErrors));
         EnsureCurrentVersion(task, request.Version);
 
         var title = request.Title.Trim();
@@ -731,6 +937,11 @@ public sealed class TaskStore(
                 .ToArray());
         var description = resolvedMentions.Description;
         var priority = request.Priority ?? task.Priority;
+        var bugCategory = task.WorkItemType == WorkItemType.Bug ? request.BugCategory : null;
+        var bugSeverity = task.WorkItemType == WorkItemType.Bug ? request.BugSeverity : null;
+        var bugReproducibility = task.WorkItemType == WorkItemType.Bug ? request.BugReproducibility : null;
+        var foundInVersion = task.WorkItemType == WorkItemType.Bug ? NormalizeOptional(request.FoundInVersion) : null;
+        var bugEnvironment = task.WorkItemType == WorkItemType.Bug ? NormalizeOptional(request.BugEnvironment) : null;
         LumaProject? updatedProject = null;
         if (request.ProjectId is { } projectId)
         {
@@ -741,6 +952,19 @@ public sealed class TaskStore(
         var descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
         var priorityChanged = task.Priority != priority;
         var projectChanged = task.ProjectId != request.ProjectId;
+        var bugMetadataChanged = task.BugCategory != bugCategory ||
+                                 task.BugSeverity != bugSeverity ||
+                                 task.BugReproducibility != bugReproducibility ||
+                                 !string.Equals(task.FoundInVersion, foundInVersion, StringComparison.Ordinal) ||
+                                 !string.Equals(task.BugEnvironment, bugEnvironment, StringComparison.Ordinal);
+        var normalizedBugDetails = task.WorkItemType == WorkItemType.Bug
+            ? ToBugDetailsInput(ToBugDetailsEntity(effectiveBugDetails))
+            : null;
+        var adaptiveBugDetailsChanged = !Equals(ToBugDetailsInput(task.BugDetails), normalizedBugDetails);
+        var reproductionStepsChanged = request.ReproductionSteps is not null &&
+                                       !ReproductionStepsEqual(task.ReproductionSteps, effectiveReproductionSteps ?? []);
+        var reproductionMarkdownChanged = request.ReproductionMarkdown is not null &&
+            !string.Equals(task.BugDetails?.ReproductionMarkdown, effectiveReproductionMarkdown, StringComparison.Ordinal);
         var existingMentionKeys = task.Mentions
             .Select(mention => mention.UserId)
             .ToHashSet();
@@ -754,7 +978,19 @@ public sealed class TaskStore(
             .Distinct()
             .Where(userId => !existingMentionedUserIds.Contains(userId))
             .ToArray();
+        var reproductionWasSubmitted = request.ReproductionSteps is not null || request.ReproductionMarkdown is not null;
+        var submittedStepIds = (effectiveReproductionSteps ?? [])
+            .Where(step => step.Id is not null)
+            .Select(step => step.Id!.Value)
+            .ToHashSet();
+        if (reproductionWasSubmitted && submittedStepIds.Any(id => task.ReproductionSteps.All(step => step.Id != id)))
+            throw new ValidationException("One or more reproduction steps no longer belong to this bug.");
+        var removedSteps = !reproductionWasSubmitted
+            ? []
+            : task.ReproductionSteps.Where(step => !submittedStepIds.Contains(step.Id)).ToArray();
         var removedIds = (request.RemovedAttachmentIds ?? [])
+            .Concat((effectiveReproductionSteps ?? []).SelectMany(step => step.RemovedImageIds ?? []))
+            .Concat(removedSteps.SelectMany(step => step.Attachments).Select(attachment => attachment.Id))
             .Where(id => id != Guid.Empty)
             .Distinct()
             .ToArray();
@@ -769,11 +1005,16 @@ public sealed class TaskStore(
                             removedAttachments.Sum(attachment => attachment.SizeBytes);
         var storedAttachments = await StoreAttachmentsAsync(
             task.Id, currentUserId, request.NewAttachments, remainingCount, remainingSize);
+        var allStoredAttachments = new List<TaskAttachment>(storedAttachments);
         description = TaskMarkdownImageSyntax.ResolvePendingUrls(
             description, request.NewAttachments, storedAttachments);
         descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
-        var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0;
-        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !attachmentsChanged && !mentionsChanged)
+        var stepInputsWithImages = (effectiveReproductionSteps ?? [])
+            .Where(step => (step.NewImages?.Count ?? 0) > 0)
+            .ToArray();
+        var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0 || stepInputsWithImages.Length > 0;
+        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !attachmentsChanged && !mentionsChanged &&
+            !bugMetadataChanged && !adaptiveBugDetailsChanged && !reproductionStepsChanged && !reproductionMarkdownChanged)
             return ToDetails(task, currentUserId);
 
         task.Title = title;
@@ -781,11 +1022,67 @@ public sealed class TaskStore(
         task.Priority = priority;
         task.ProjectId = request.ProjectId;
         task.Project = updatedProject;
+        task.BugCategory = bugCategory;
+        task.BugSeverity = bugSeverity;
+        task.BugReproducibility = bugReproducibility;
+        task.FoundInVersion = foundInVersion;
+        task.BugEnvironment = bugEnvironment;
+        if (task.WorkItemType == WorkItemType.Bug)
+        {
+            task.BugDetails ??= new LumaTaskBugDetails { TaskId = task.Id };
+            ApplyBugDetails(task.BugDetails, effectiveBugDetails);
+            task.BugDetails.ReproductionMarkdown = effectiveReproductionMarkdown;
+        }
         task.Version = Guid.NewGuid();
         db.TaskAttachments.RemoveRange(removedAttachments);
         foreach (var attachment in removedAttachments)
+        {
             task.Attachments.Remove(attachment);
-        db.TaskAttachments.AddRange(storedAttachments);
+            attachment.BugReproductionStep?.Attachments.Remove(attachment);
+        }
+        db.BugReproductionSteps.RemoveRange(removedSteps);
+        foreach (var step in removedSteps)
+            task.ReproductionSteps.Remove(step);
+        try
+        {
+            if (request.ReproductionSteps is not null || request.ReproductionMarkdown is not null)
+            {
+                var countAfterRemoval = remainingCount + storedAttachments.Count;
+                var sizeAfterRemoval = remainingSize + storedAttachments.Sum(item => item.SizeBytes);
+                var reproductionUploads = new List<TaskAttachmentUpload>();
+                var reproductionStored = new List<TaskAttachment>();
+                for (var index = 0; index < (effectiveReproductionSteps?.Count ?? 0); index++)
+                {
+                    var input = effectiveReproductionSteps![index];
+                    var step = input.Id is { } stepId
+                        ? task.ReproductionSteps.Single(item => item.Id == stepId)
+                        : new BugReproductionStep { Id = Guid.NewGuid(), TaskId = task.Id };
+                    if (input.Id is null) task.ReproductionSteps.Add(step);
+                    step.Position = index;
+                    step.Content = input.Content.Trim();
+                    step.ObservedResult = NormalizeOptional(input.ObservedResult);
+                    step.IsPrimaryFailure = input.IsPrimaryFailure;
+                    var stepImages = await StoreAttachmentsAsync(
+                        task.Id, currentUserId, input.NewImages, countAfterRemoval, sizeAfterRemoval, step.Id);
+                    allStoredAttachments.AddRange(stepImages);
+                    countAfterRemoval += stepImages.Count;
+                    sizeAfterRemoval += stepImages.Sum(item => item.SizeBytes);
+                    foreach (var image in stepImages) task.Attachments.Add(image);
+                    step.Content = TaskMarkdownImageSyntax.ResolvePendingUrls(step.Content, input.NewImages, stepImages);
+                    reproductionUploads.AddRange(input.NewImages ?? []);
+                    reproductionStored.AddRange(stepImages);
+                }
+                if (task.BugDetails is not null)
+                    task.BugDetails.ReproductionMarkdown = TaskMarkdownImageSyntax.ResolvePendingUrls(
+                        task.BugDetails.ReproductionMarkdown ?? string.Empty, reproductionUploads, reproductionStored);
+            }
+        }
+        catch
+        {
+            await DeleteStoredAttachmentsAsync(allStoredAttachments);
+            throw;
+        }
+        db.TaskAttachments.AddRange(allStoredAttachments);
         if (mentionsChanged)
         {
             var removedMentions = task.Mentions
@@ -822,7 +1119,7 @@ public sealed class TaskStore(
         }
         catch
         {
-            await DeleteStoredAttachmentsAsync(storedAttachments);
+            await DeleteStoredAttachmentsAsync(allStoredAttachments);
             throw;
         }
 
@@ -1118,7 +1415,8 @@ public sealed class TaskStore(
         Guid uploaderUserId,
         IReadOnlyList<TaskAttachmentUpload>? uploads,
         int existingCount,
-        long existingSizeBytes)
+        long existingSizeBytes,
+        Guid? bugReproductionStepId = null)
     {
         if (uploads is null || uploads.Count == 0) return [];
         if (existingCount + uploads.Count > TaskAttachmentRules.MaximumAttachmentCount)
@@ -1157,6 +1455,7 @@ public sealed class TaskStore(
                     Id = Guid.NewGuid(),
                     TaskId = taskId,
                     UploadedByUserId = uploaderUserId,
+                    BugReproductionStepId = bugReproductionStepId,
                     OriginalFileName = SafeFileName(upload.FileName, extension),
                     ContentType = content.ContentType,
                     SizeBytes = content.Bytes.LongLength,
@@ -1354,6 +1653,9 @@ public sealed class TaskStore(
             .Include(item => item.Attachments)
             .Include(item => item.Mentions)
                 .ThenInclude(mention => mention.User)
+            .Include(item => item.BugDetails)
+            .Include(item => item.ReproductionSteps)
+                .ThenInclude(step => step.Attachments)
             .SingleOrDefaultAsync(item => item.Id == taskId)
         ?? throw new LumaTaskNotFoundException();
 
@@ -1427,6 +1729,7 @@ public sealed class TaskStore(
             task.CreatorId == currentUserId || task.AssigneeId == currentUserId,
             task.AssigneeId is null && task.Invitation is null,
             task.Attachments
+                .Where(attachment => attachment.BugReproductionStepId == null)
                 .OrderBy(attachment => attachment.CreatedAt)
                 .Select(attachment => new TaskAttachmentDetails(
                     attachment.Id,
@@ -1435,7 +1738,31 @@ public sealed class TaskStore(
                     attachment.SizeBytes,
                     attachment.CreatedAt))
                 .ToArray(),
-            mentions);
+            mentions,
+            task.WorkItemType,
+            task.BugCategory,
+            task.BugSeverity,
+            task.BugReproducibility,
+            task.FoundInVersion ?? string.Empty,
+            task.BugEnvironment ?? string.Empty,
+            ToBugDetailsInput(task.BugDetails),
+            task.ReproductionSteps
+                .OrderBy(step => step.Position)
+                .Select(step => new BugReproductionStepDetails(
+                    step.Id,
+                    step.Position,
+                    step.Content,
+                    step.ObservedResult ?? string.Empty,
+                    step.IsPrimaryFailure,
+                    step.Attachments.OrderBy(image => image.CreatedAt)
+                        .Select(image => new TaskAttachmentDetails(
+                            image.Id, image.OriginalFileName, image.ContentType, image.SizeBytes, image.CreatedAt))
+                        .ToArray()))
+                .ToArray(),
+            string.IsNullOrWhiteSpace(task.BugDetails?.ReproductionMarkdown)
+                ? BugReproductionMarkdown.FromLegacySteps(
+                    task.ReproductionSteps.OrderBy(step => step.Position).Select(ToReproductionStepDetails))
+                : task.BugDetails.ReproductionMarkdown);
     }
 
     private async Task<Guid> GetCurrentUserIdAsync()
@@ -1462,6 +1789,7 @@ public sealed class TaskStore(
             errors.Add("Task description cannot exceed 10000 characters.");
         if (TaskMarkdownImageSyntax.ContainsEmbeddedDataImage(request.Description))
             errors.Add("Paste or upload task images instead of embedding image data in the description.");
+        ValidateReproductionMarkdown(errors, request.WorkItemType, request.ReproductionMarkdown);
         if (request.AssigneeId == Guid.Empty)
             errors.Add("Choose a valid task assignee.");
         else if (request.AssigneeId is null && !string.IsNullOrWhiteSpace(request.AssigneeEmail) &&
@@ -1471,6 +1799,20 @@ public sealed class TaskStore(
             errors.Add("Task deadline cannot be before today.");
         if (!Enum.IsDefined(request.Priority))
             errors.Add("Choose a valid task priority.");
+        ValidateBugMetadata(
+            errors,
+            request.WorkItemType,
+            request.BugCategory,
+            request.BugSeverity,
+            request.BugReproducibility,
+            request.FoundInVersion,
+            request.BugEnvironment);
+        ValidateAdaptiveBugDetails(
+            errors, request.WorkItemType, request.BugDetails,
+            request.WorkItemType == WorkItemType.Bug
+                ? ReconcileMarkdownSteps(NormalizeReproductionMarkdown(request.ReproductionMarkdown), request.ReproductionSteps, [])
+                : request.ReproductionSteps,
+            isCreate: true);
         if (request.ProjectId == Guid.Empty)
             errors.Add("Choose an existing LUMA project.");
 
@@ -1507,6 +1849,7 @@ public sealed class TaskStore(
             errors.Add("Task description cannot exceed 10000 characters.");
         if (TaskMarkdownImageSyntax.ContainsEmbeddedDataImage(request.Description))
             errors.Add("Paste or upload task images instead of embedding image data in the description.");
+        ValidateReproductionMarkdown(errors, WorkItemType.Bug, request.ReproductionMarkdown);
         if (request.Priority is not null && !Enum.IsDefined(request.Priority.Value))
             errors.Add("Choose a valid task priority.");
         if (request.ProjectId == Guid.Empty)
@@ -1516,6 +1859,263 @@ public sealed class TaskStore(
 
         if (errors.Count > 0)
             throw new ValidationException(string.Join(" ", errors));
+    }
+
+    private static void ValidateBugMetadata(
+        ICollection<string> errors,
+        WorkItemType workItemType,
+        BugCategory? category,
+        BugSeverity? severity,
+        BugReproducibility? reproducibility,
+        string? foundInVersion,
+        string? environment)
+    {
+        if (!Enum.IsDefined(workItemType))
+        {
+            errors.Add("Choose a valid work item type.");
+            return;
+        }
+
+        if (workItemType == WorkItemType.Task)
+        {
+            if (category is not null || severity is not null || reproducibility is not null ||
+                !string.IsNullOrWhiteSpace(foundInVersion) || !string.IsNullOrWhiteSpace(environment))
+                errors.Add("Bug details can only be saved for Bug work items.");
+            return;
+        }
+
+        if (category is null || !Enum.IsDefined(category.Value))
+            errors.Add("Choose a valid bug category.");
+        if (severity is null || !Enum.IsDefined(severity.Value))
+            errors.Add("Choose a valid bug severity.");
+        if (reproducibility is null || !Enum.IsDefined(reproducibility.Value))
+            errors.Add("Choose how often the bug reproduces.");
+        if ((foundInVersion?.Trim().Length ?? 0) > 80)
+            errors.Add("Found in version cannot exceed 80 characters.");
+        if ((environment?.Trim().Length ?? 0) > 500)
+            errors.Add("Bug environment cannot exceed 500 characters.");
+    }
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static void ValidateAdaptiveBugDetails(
+        ICollection<string> errors,
+        WorkItemType workItemType,
+        BugAdaptiveDetailsInput? details,
+        IReadOnlyList<BugReproductionStepInput>? steps,
+        bool isCreate)
+    {
+        if (workItemType == WorkItemType.Task)
+        {
+            if (details is not null || (steps?.Count ?? 0) > 0)
+                errors.Add("Adaptive bug details can only be saved for Bug work items.");
+            return;
+        }
+
+        ValidateOptionalLength(errors, details?.ExpectedResult, 4000, "Expected result");
+        ValidateOptionalLength(errors, details?.ObservedResult, 4000, "Observed result");
+        ValidateOptionalLength(errors, details?.ErrorMessage, 2000, "Error message");
+        ValidateOptionalLength(errors, details?.ErrorDetails, 10000, "Logs or stack trace");
+        ValidateOptionalLength(errors, details?.Logs, 10000, "Logs");
+        ValidateOptionalLength(errors, details?.ExpectedDuration, 100, "Expected duration");
+        ValidateOptionalLength(errors, details?.ActualDuration, 100, "Actual duration");
+        ValidateOptionalLength(errors, details?.HttpMethod, 12, "HTTP method");
+        ValidateOptionalLength(errors, details?.Endpoint, 2000, "Endpoint");
+        ValidateOptionalLength(errors, details?.ApiRequest, 10000, "API request");
+        ValidateOptionalLength(errors, details?.ApiResponse, 10000, "API response");
+        ValidateOptionalLength(errors, details?.CorrelationId, 200, "Correlation ID");
+        ValidateOptionalLength(errors, details?.DataEntity, 200, "Entity or record");
+        ValidateOptionalLength(errors, details?.DataIdentifier, 500, "Identifier");
+        ValidateOptionalLength(errors, details?.ExpectedValue, 4000, "Expected value");
+        ValidateOptionalLength(errors, details?.ActualValue, 4000, "Actual value");
+        ValidateOptionalLength(errors, details?.LastKnownGoodVersion, 80, "Last known good version");
+        ValidateOptionalLength(errors, details?.FirstBrokenVersion, 80, "First broken version");
+        ValidateOptionalLength(errors, details?.WorksOn, 500, "Works on");
+        ValidateOptionalLength(errors, details?.FailsOn, 500, "Fails on");
+        if (details?.Attempts is <= 0 or > 100000)
+            errors.Add("Attempts must be between 1 and 100000.");
+        if (details?.StatusCode is < 100 or > 599)
+            errors.Add("Choose a valid HTTP status code.");
+
+        var submittedSteps = steps ?? [];
+        if (submittedSteps.Count > 50)
+            errors.Add("A bug can have up to 50 reproduction steps.");
+        if (submittedSteps.Count(step => step.IsPrimaryFailure) > 1)
+            errors.Add("Only one reproduction step can be marked as the primary failure.");
+        foreach (var step in submittedSteps)
+        {
+            if (isCreate && step.Id is not null)
+                errors.Add("New reproduction steps cannot supply an existing step identifier.");
+            if (string.IsNullOrWhiteSpace(step.Content))
+                errors.Add("Each reproduction step needs an instruction.");
+            else if (step.Content.Trim().Length > 4000)
+                errors.Add("A reproduction step cannot exceed 4000 characters.");
+            if ((step.ObservedResult?.Trim().Length ?? 0) > 2000)
+                errors.Add("A reproduction step observed result cannot exceed 2000 characters.");
+        }
+    }
+
+    private static void ValidateOptionalLength(ICollection<string> errors, string? value, int maximum, string label)
+    {
+        if ((value?.Trim().Length ?? 0) > maximum)
+            errors.Add($"{label} cannot exceed {maximum} characters.");
+    }
+
+    private static LumaTaskBugDetails ToBugDetailsEntity(BugAdaptiveDetailsInput? input)
+    {
+        input ??= new BugAdaptiveDetailsInput();
+        return new LumaTaskBugDetails
+        {
+            ExpectedResult = NormalizeOptional(input.ExpectedResult),
+            ObservedResult = NormalizeOptional(input.ObservedResult),
+            ErrorMessage = NormalizeOptional(input.ErrorMessage),
+            ErrorDetails = NormalizeOptional(input.ErrorDetails),
+            Logs = NormalizeOptional(input.Logs),
+            ExpectedDuration = NormalizeOptional(input.ExpectedDuration),
+            ActualDuration = NormalizeOptional(input.ActualDuration),
+            Attempts = input.Attempts,
+            HttpMethod = NormalizeOptional(input.HttpMethod)?.ToUpperInvariant(),
+            Endpoint = NormalizeOptional(input.Endpoint),
+            StatusCode = input.StatusCode,
+            ApiRequest = NormalizeOptional(input.ApiRequest),
+            ApiResponse = NormalizeOptional(input.ApiResponse),
+            CorrelationId = NormalizeOptional(input.CorrelationId),
+            DataEntity = NormalizeOptional(input.DataEntity),
+            DataIdentifier = NormalizeOptional(input.DataIdentifier),
+            ExpectedValue = NormalizeOptional(input.ExpectedValue),
+            ActualValue = NormalizeOptional(input.ActualValue),
+            LastKnownGoodVersion = NormalizeOptional(input.LastKnownGoodVersion),
+            FirstBrokenVersion = NormalizeOptional(input.FirstBrokenVersion),
+            WorksOn = NormalizeOptional(input.WorksOn),
+            FailsOn = NormalizeOptional(input.FailsOn)
+        };
+    }
+
+    private static BugAdaptiveDetailsInput? ToBugDetailsInput(LumaTaskBugDetails? details) => details is null ? null : new(
+        details.ExpectedResult,
+        details.ObservedResult,
+        details.ErrorMessage,
+        details.ErrorDetails,
+        details.ExpectedDuration,
+        details.ActualDuration,
+        details.Attempts,
+        details.HttpMethod,
+        details.Endpoint,
+        details.StatusCode,
+        details.ApiRequest,
+        details.ApiResponse,
+        details.CorrelationId,
+        details.DataEntity,
+        details.DataIdentifier,
+        details.ExpectedValue,
+        details.ActualValue,
+        details.LastKnownGoodVersion,
+        details.FirstBrokenVersion,
+        details.WorksOn,
+        details.FailsOn,
+        details.Logs);
+
+    private static void ApplyBugDetails(LumaTaskBugDetails target, BugAdaptiveDetailsInput? input)
+    {
+        var normalized = ToBugDetailsEntity(input);
+        target.ExpectedResult = normalized.ExpectedResult;
+        target.ObservedResult = normalized.ObservedResult;
+        target.ErrorMessage = normalized.ErrorMessage;
+        target.ErrorDetails = normalized.ErrorDetails;
+        target.Logs = normalized.Logs;
+        target.ExpectedDuration = normalized.ExpectedDuration;
+        target.ActualDuration = normalized.ActualDuration;
+        target.Attempts = normalized.Attempts;
+        target.HttpMethod = normalized.HttpMethod;
+        target.Endpoint = normalized.Endpoint;
+        target.StatusCode = normalized.StatusCode;
+        target.ApiRequest = normalized.ApiRequest;
+        target.ApiResponse = normalized.ApiResponse;
+        target.CorrelationId = normalized.CorrelationId;
+        target.DataEntity = normalized.DataEntity;
+        target.DataIdentifier = normalized.DataIdentifier;
+        target.ExpectedValue = normalized.ExpectedValue;
+        target.ActualValue = normalized.ActualValue;
+        target.LastKnownGoodVersion = normalized.LastKnownGoodVersion;
+        target.FirstBrokenVersion = normalized.FirstBrokenVersion;
+        target.WorksOn = normalized.WorksOn;
+        target.FailsOn = normalized.FailsOn;
+    }
+
+    private static bool ReproductionStepsEqual(
+        IEnumerable<BugReproductionStep> existing,
+        IReadOnlyList<BugReproductionStepInput> submitted)
+    {
+        var current = existing.OrderBy(step => step.Position).ToArray();
+        if (current.Length != submitted.Count) return false;
+        for (var index = 0; index < current.Length; index++)
+        {
+            var left = current[index];
+            var right = submitted[index];
+            if (right.Id != left.Id ||
+                !string.Equals(left.Content, right.Content.Trim(), StringComparison.Ordinal) ||
+                !string.Equals(left.ObservedResult, NormalizeOptional(right.ObservedResult), StringComparison.Ordinal) ||
+                left.IsPrimaryFailure != right.IsPrimaryFailure ||
+                (right.NewImages?.Count ?? 0) > 0 ||
+                (right.RemovedImageIds?.Count ?? 0) > 0)
+                return false;
+        }
+        return true;
+    }
+
+    private static IReadOnlyList<BugReproductionStepInput> ReconcileMarkdownSteps(
+        string? markdown,
+        IReadOnlyList<BugReproductionStepInput>? submitted,
+        IReadOnlyList<BugReproductionStepDetails> existing)
+    {
+        if (markdown is null) return submitted ?? [];
+        var parsed = BugReproductionMarkdown.Parse(markdown);
+        var result = new List<BugReproductionStepInput>(parsed.Count);
+        foreach (var parsedStep in parsed)
+        {
+            var submittedMatches = (submitted ?? [])
+                .Where(item => BugReproductionMarkdown.MatchKey(item.Content) == BugReproductionMarkdown.MatchKey(parsedStep.Markdown))
+                .ToArray();
+            var existingMatches = existing
+                .Where(item => BugReproductionMarkdown.MatchKey(item.Content) == BugReproductionMarkdown.MatchKey(parsedStep.Markdown))
+                .ToArray();
+            var source = submittedMatches.Length == 1 ? submittedMatches[0] : null;
+            var prior = existingMatches.Length == 1 ? existingMatches[0] : null;
+            result.Add(new BugReproductionStepInput(
+                source?.Id ?? prior?.Id,
+                parsedStep.Markdown,
+                source?.ObservedResult ?? prior?.ObservedResult,
+                source?.IsPrimaryFailure ?? prior?.IsPrimaryFailure ?? false,
+                source?.NewImages,
+                source?.RemovedImageIds));
+        }
+        if (result.Count(item => item.IsPrimaryFailure) > 1)
+            result = result.Select(item => item with { IsPrimaryFailure = false }).ToList();
+        return result;
+    }
+
+    private static BugReproductionStepDetails ToReproductionStepDetails(BugReproductionStep step) => new(
+        step.Id, step.Position, step.Content, step.ObservedResult ?? string.Empty, step.IsPrimaryFailure,
+        step.Attachments.OrderBy(image => image.CreatedAt)
+            .Select(image => new TaskAttachmentDetails(image.Id, image.OriginalFileName, image.ContentType, image.SizeBytes, image.CreatedAt))
+            .ToArray());
+
+    private static string? NormalizeReproductionMarkdown(string? markdown) =>
+        string.IsNullOrWhiteSpace(markdown) ? null : markdown.Trim();
+
+    private static void ValidateReproductionMarkdown(ICollection<string> errors, WorkItemType itemType, string? markdown)
+    {
+        if (markdown is null) return;
+        if (itemType != WorkItemType.Bug)
+        {
+            errors.Add("Reproduction steps can only be saved for Bug work items.");
+            return;
+        }
+        if (markdown.Length > BugReproductionMarkdown.MaximumLength)
+            errors.Add($"Reproduction steps cannot exceed {BugReproductionMarkdown.MaximumLength} characters.");
+        if (TaskMarkdownImageSyntax.ContainsEmbeddedDataImage(markdown))
+            errors.Add("Paste or upload reproduction images instead of embedding image data.");
     }
 
     private static void EnsureCurrentVersion(LumaTask task, Guid version)

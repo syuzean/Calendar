@@ -112,6 +112,36 @@
     margin: 0;
 }
 
+.bug-details-metadata {
+    display: grid;
+    grid-template-columns: 142px minmax(0, 1fr);
+    gap: 14px;
+    border: 1px solid #e4ddef;
+    border-radius: 14px;
+    background: linear-gradient(145deg, #fff, #fbf9ff);
+    padding: 13px;
+}
+
+.bug-details-metadata-title { display: flex; align-items: flex-start; gap: 8px; }
+.bug-details-metadata-title > span { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 8px; background: #fcecef; color: #c94459; font-size: 14px; font-weight: 900; }
+.bug-details-metadata-title small { color: #8f7fc1; font-size: 6.5px; font-weight: 800; letter-spacing: .7px; }
+.bug-details-metadata-title h3 { margin: 3px 0 0; color: #39313f; font-size: 11px; }
+.bug-details-metadata dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
+.bug-details-metadata dl > div { min-width: 0; }
+.bug-details-metadata dl > div.bug-environment { grid-column: 1 / -1; }
+.bug-details-metadata dt { color: #8a8291; font-size: 7px; font-weight: 800; letter-spacing: .45px; text-transform: uppercase; }
+.bug-details-metadata dd { margin: 4px 0 0; overflow-wrap: anywhere; color: #3f3847; font-size: 9.5px; font-weight: 700; }
+.bug-severity { display: inline-flex; align-items: center; gap: 5px; }
+.bug-severity i { width: 7px; height: 7px; border-radius: 50%; background: #74aa78; }
+.bug-severity.medium i { background: #d5a641; }
+.bug-severity.high i { background: #df753e; }
+.bug-severity.critical { color: #b7374b; }
+.bug-severity.critical i { background: #cd3e53; box-shadow: 0 0 0 3px rgba(205, 62, 83, .1); }
+
+.bug-adaptive-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; border:1px solid #e8e2ed; border-radius:13px; background:#fcfbfd; padding:12px; }
+.bug-adaptive-details>div { min-width:0; }.bug-adaptive-details>div.wide { grid-column:1/-1; }.bug-adaptive-details dt { color:#8a8291; font-size:7px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }.bug-adaptive-details dd { margin:4px 0 0; overflow-wrap:anywhere; color:#403847; font-size:9.5px; line-height:1.5; }.bug-adaptive-details .preformatted dd { white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:8.5px; }
+.bug-reproduction-details { display:grid; gap:9px; border:1px solid #e5deed; border-radius:13px; background:#fff; padding:13px; }.bug-reproduction-details-heading h3 { margin:3px 0 0; color:#39323f; font-size:11px; }.bug-reproduction-details ol { display:grid; gap:6px; margin:0; padding:0; list-style:none; }.bug-reproduction-details li { display:grid; grid-template-columns:25px minmax(0,1fr) auto; align-items:start; gap:8px; border:1px solid #ebe6ef; border-radius:10px; padding:8px; }.bug-reproduction-details li.primary-failure { border-color:#efadb6; background:#fff9fa; }.bug-detail-step-number { display:grid; place-items:center; width:24px; height:24px; border-radius:7px; background:#f0edf4; color:#625968; font-size:8px; font-weight:800; }.primary-failure .bug-detail-step-number { background:#fde8eb; color:#b63c50; }.bug-step-markdown { color:#3e3745; font-size:9.5px; line-height:1.5; }.bug-step-markdown ::deep p { margin:2px 0; }.bug-reproduction-details li p { margin:5px 0 0; color:#ad3f51; font-size:8px; }.bug-here-badge { border-radius:7px; background:#fde5e9; padding:5px 7px; color:#b9364b; font-size:6.5px; font-weight:900; }.bug-detail-step-images { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }.bug-detail-step-images button { display:flex; align-items:center; gap:5px; max-width:145px; border:1px solid #e4deea; border-radius:8px; background:#fff; padding:3px; cursor:zoom-in; }.bug-detail-step-images img { width:32px; height:32px; border-radius:6px; object-fit:cover; }.bug-detail-step-images span { overflow:hidden; color:#746b7b; font-size:6.5px; text-overflow:ellipsis; white-space:nowrap; }
+
 .task-detail-grid > div {
     min-width: 0;
     border: 1px solid #ebe6ef;
@@ -638,6 +668,9 @@
     }
 
     .task-structured-description { grid-template-columns: 1fr; }
+    .bug-details-metadata { grid-template-columns: 1fr; }
+    .bug-adaptive-details { grid-template-columns:1fr; }
+    .bug-adaptive-details>div.wide { grid-column:auto; }
     .task-attachment-gallery > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
     .task-detail-grid {

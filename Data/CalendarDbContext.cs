@@ -18,6 +18,8 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<TaskAttachment> TaskAttachments => Set<TaskAttachment>();
     public DbSet<TaskMention> TaskMentions => Set<TaskMention>();
     public DbSet<TaskCommentMention> TaskCommentMentions => Set<TaskCommentMention>();
+    public DbSet<LumaTaskBugDetails> TaskBugDetails => Set<LumaTaskBugDetails>();
+    public DbSet<BugReproductionStep> BugReproductionSteps => Set<BugReproductionStep>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,6 +88,8 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.Property(task => task.Title).HasMaxLength(180);
             entity.Property(task => task.Description).HasMaxLength(10000);
             entity.Property(task => task.DeadlineChangeComment).HasMaxLength(1000);
+            entity.Property(task => task.FoundInVersion).HasMaxLength(80);
+            entity.Property(task => task.BugEnvironment).HasMaxLength(500);
             entity.Property(task => task.Deadline).HasColumnType("date");
             entity.Property(task => task.RequestedDeadline).HasColumnType("date");
             entity.Property(task => task.Version).IsConcurrencyToken();
@@ -94,6 +98,11 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 table.HasCheckConstraint("CK_Tasks_AssignmentStatus", "[AssignmentStatus] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Tasks_WorkStatus", "[WorkStatus] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Tasks_Priority", "[Priority] IN (0, 1, 2, 3, 4)");
+                table.HasCheckConstraint("CK_Tasks_WorkItemType", "[WorkItemType] IN (0, 1)");
+                table.HasCheckConstraint("CK_Tasks_BugCategory", "[BugCategory] IS NULL OR [BugCategory] IN (0, 1, 2, 3, 4, 5, 6, 7)");
+                table.HasCheckConstraint("CK_Tasks_BugSeverity", "[BugSeverity] IS NULL OR [BugSeverity] IN (0, 1, 2, 3)");
+                table.HasCheckConstraint("CK_Tasks_BugReproducibility", "[BugReproducibility] IS NULL OR [BugReproducibility] IN (0, 1, 2, 3)");
+                table.HasCheckConstraint("CK_Tasks_BugMetadata", "([WorkItemType] = 0 AND [BugCategory] IS NULL AND [BugSeverity] IS NULL AND [BugReproducibility] IS NULL AND [FoundInVersion] IS NULL AND [BugEnvironment] IS NULL) OR ([WorkItemType] = 1 AND [BugCategory] IS NOT NULL AND [BugSeverity] IS NOT NULL AND [BugReproducibility] IS NOT NULL)");
             });
             entity.HasOne(task => task.Creator)
                 .WithMany(user => user.CreatedTasks)
@@ -200,6 +209,53 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
                 .WithMany(user => user.UploadedTaskAttachments)
                 .HasForeignKey(attachment => attachment.UploadedByUserId)
                 .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(attachment => attachment.BugReproductionStep)
+                .WithMany(step => step.Attachments)
+                .HasForeignKey(attachment => attachment.BugReproductionStepId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LumaTaskBugDetails>(entity =>
+        {
+            entity.ToTable("TaskBugDetails");
+            entity.HasKey(details => details.TaskId);
+            entity.Property(details => details.ExpectedResult).HasMaxLength(4000);
+            entity.Property(details => details.ObservedResult).HasMaxLength(4000);
+            entity.Property(details => details.ErrorMessage).HasMaxLength(2000);
+            entity.Property(details => details.ErrorDetails).HasMaxLength(10000);
+            entity.Property(details => details.Logs).HasMaxLength(10000);
+            entity.Property(details => details.ReproductionMarkdown).HasMaxLength(30000);
+            entity.Property(details => details.ExpectedDuration).HasMaxLength(100);
+            entity.Property(details => details.ActualDuration).HasMaxLength(100);
+            entity.Property(details => details.HttpMethod).HasMaxLength(12);
+            entity.Property(details => details.Endpoint).HasMaxLength(2000);
+            entity.Property(details => details.ApiRequest).HasMaxLength(10000);
+            entity.Property(details => details.ApiResponse).HasMaxLength(10000);
+            entity.Property(details => details.CorrelationId).HasMaxLength(200);
+            entity.Property(details => details.DataEntity).HasMaxLength(200);
+            entity.Property(details => details.DataIdentifier).HasMaxLength(500);
+            entity.Property(details => details.ExpectedValue).HasMaxLength(4000);
+            entity.Property(details => details.ActualValue).HasMaxLength(4000);
+            entity.Property(details => details.LastKnownGoodVersion).HasMaxLength(80);
+            entity.Property(details => details.FirstBrokenVersion).HasMaxLength(80);
+            entity.Property(details => details.WorksOn).HasMaxLength(500);
+            entity.Property(details => details.FailsOn).HasMaxLength(500);
+            entity.HasOne(details => details.Task)
+                .WithOne(task => task.BugDetails)
+                .HasForeignKey<LumaTaskBugDetails>(details => details.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<BugReproductionStep>(entity =>
+        {
+            entity.ToTable("BugReproductionSteps");
+            entity.Property(step => step.Content).HasMaxLength(4000);
+            entity.Property(step => step.ObservedResult).HasMaxLength(2000);
+            entity.HasIndex(step => new { step.TaskId, step.Position });
+            entity.HasOne(step => step.Task)
+                .WithMany(task => task.ReproductionSteps)
+                .HasForeignKey(step => step.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<TaskMention>(entity =>

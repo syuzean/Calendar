@@ -62,6 +62,7 @@
     [Parameter] public string HelpText { get; set; } = "optional · Markdown · @mentions";
     [Parameter] public bool Compact { get; set; }
     [Parameter] public bool EnableImages { get; set; }
+    [Parameter] public bool EnableMentions { get; set; } = true;
     [Parameter] public string Value { get; set; } = string.Empty;
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public IReadOnlyCollection<Guid> MentionUserIds { get; set; } = [];
@@ -116,6 +117,12 @@
     {
         Value = args.Value?.ToString() ?? string.Empty;
         await ValueChanged.InvokeAsync(Value);
+        if (!EnableMentions)
+        {
+            Context = null;
+            ShowSuggestions = false;
+            return;
+        }
         var retainedMentionIds = MentionUserIds
             .Where(userId => Users.FirstOrDefault(user => user.Id == userId) is { } user &&
                              TaskMentionSyntax.ContainsVisibleMention(Value, user.Name))

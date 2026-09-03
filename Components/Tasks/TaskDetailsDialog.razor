@@ -11,7 +11,7 @@
              aria-labelledby="task-details-title" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
         <header class="dialog-header task-details-header">
             <div>
-                <span class="eyebrow">TASK DETAILS</span>
+                <span class="eyebrow">@(Details?.WorkItemType == WorkItemType.Bug ? "BUG DETAILS" : "TASK DETAILS")</span>
                 <h2 id="task-details-title">@(Details?.Title ?? (IsLoading ? "Opening task…" : "Task unavailable"))</h2>
             </div>
             <button class="icon-button" aria-label="Close task details" type="button" autofocus @onclick="Close">×</button>
@@ -50,6 +50,93 @@
                         }
                     </article>
                 </section>
+
+                @if (Details.WorkItemType == WorkItemType.Bug)
+                {
+                    <section class="bug-details-metadata" aria-labelledby="bug-details-metadata-heading">
+                        <div class="bug-details-metadata-title">
+                            <span aria-hidden="true">⌁</span>
+                            <div><small>QA CLASSIFICATION</small><h3 id="bug-details-metadata-heading">Bug information</h3></div>
+                        </div>
+                        <dl>
+                            <div><dt>Category</dt><dd>@BugCategoryLabel(Details.BugCategory)</dd></div>
+                            <div><dt>Severity</dt><dd><span class="bug-severity @BugSeverityClass(Details.BugSeverity)"><i aria-hidden="true"></i>@BugSeverityLabel(Details.BugSeverity)</span></dd></div>
+                            <div><dt>Reproduces</dt><dd>@BugReproducibilityLabel(Details.BugReproducibility)</dd></div>
+                            <div><dt>Found in</dt><dd>@(string.IsNullOrWhiteSpace(Details.FoundInVersion) ? "Not specified" : Details.FoundInVersion)</dd></div>
+                            @if (!string.IsNullOrWhiteSpace(Details.BugEnvironment))
+                            {
+                                <div class="bug-environment"><dt>Environment</dt><dd>@Details.BugEnvironment</dd></div>
+                            }
+                        </dl>
+                    </section>
+
+                    @if (Details.BugDetails is { } bugContext && HasAdaptiveDetails(bugContext, Details.BugCategory))
+                    {
+                        <section class="bug-adaptive-details" aria-label="Bug-specific details">
+                            @switch (Details.BugCategory)
+                            {
+                                case BugCategory.Functional:
+                                    @BugValue("Expected result", bugContext.ExpectedResult)
+                                    @BugValue("Observed result", bugContext.ObservedResult)
+                                    break;
+                                case BugCategory.CrashError:
+                                    @BugValue("Error message", bugContext.ErrorMessage)
+                                    @BugValue("Stack trace", bugContext.ErrorDetails, true)
+                                    @BugValue("Logs", bugContext.Logs, true)
+                                    break;
+                                case BugCategory.Performance:
+                                    @BugValue("Expected duration", bugContext.ExpectedDuration)
+                                    @BugValue("Actual duration", bugContext.ActualDuration)
+                                    @BugValue("Attempts", bugContext.Attempts?.ToString())
+                                    break;
+                                case BugCategory.ApiIntegration:
+                                    @BugValue("HTTP method", bugContext.HttpMethod)
+                                    @BugValue("Endpoint", bugContext.Endpoint)
+                                    @BugValue("Status code", bugContext.StatusCode?.ToString())
+                                    @BugValue("Request", bugContext.ApiRequest, true)
+                                    @BugValue("Response", bugContext.ApiResponse, true)
+                                    @BugValue("Correlation ID", bugContext.CorrelationId)
+                                    break;
+                                case BugCategory.Data:
+                                    @BugValue("Entity / record", bugContext.DataEntity)
+                                    @BugValue("Identifier", bugContext.DataIdentifier)
+                                    @BugValue("Expected value", bugContext.ExpectedValue, true)
+                                    @BugValue("Actual value", bugContext.ActualValue, true)
+                                    break;
+                                case BugCategory.Regression:
+                                    @BugValue("Last known good", bugContext.LastKnownGoodVersion)
+                                    @BugValue("First broken", bugContext.FirstBrokenVersion)
+                                    break;
+                                case BugCategory.Compatibility:
+                                    @BugValue("Works on", bugContext.WorksOn)
+                                    @BugValue("Fails on", bugContext.FailsOn)
+                                    break;
+                            }
+                        </section>
+                    }
+
+                    @if (Details.ReproductionSteps is { Count: > 0 } reproductionSteps)
+                    {
+                        <section id="@ReproductionMarkdownContainerId" class="bug-reproduction-details" aria-labelledby="bug-reproduction-details-heading">
+                            <div class="bug-reproduction-details-heading"><span class="eyebrow">REPRODUCTION</span><h3 id="bug-reproduction-details-heading">Steps to reproduce</h3></div>
+                            <ol>
+                                @foreach (var step in reproductionSteps)
+                                {
+                                    <li class="@(step.IsPrimaryFailure ? "primary-failure" : null)">
+                                        <span class="bug-detail-step-number">@(step.Position + 1)</span>
+                                        <div>
+                                            <div class="bug-step-markdown">@((MarkupString)MarkdownRenderer.RenderHtml(step.Content))</div>
+                                            @if (!string.IsNullOrWhiteSpace(step.ObservedResult)) { <p><strong>Observed:</strong> @step.ObservedResult</p> }
+                                            @{ var legacyImages = step.Images.Where(image => !step.Content.Contains(image.Url, StringComparison.Ordinal)).ToArray(); }
+                                            @if (legacyImages.Length > 0) { <div class="bug-detail-step-images">@foreach (var image in legacyImages) { <button type="button" @onclick="() => OpenStepImage(image)"><img src="@image.Url" alt="@image.FileName" /><span>@image.FileName</span></button> }</div> }
+                                        </div>
+                                        @if (step.IsPrimaryFailure) { <span class="bug-here-badge">BUG HERE</span> }
+                                    </li>
+                                }
+                            </ol>
+                        </section>
+                    }
+                }
 
                 @if (Details.Attachments.Count > 0)
                 {
@@ -289,6 +376,7 @@
     private string PreviewModalId => $"task-preview-modal-{ModalInstanceId}";
     private string PreviewScrollRegionId => $"task-preview-scroll-{ModalInstanceId}";
     private string MarkdownContainerId => $"task-markdown-{ModalInstanceId}";
+    private string ReproductionMarkdownContainerId => $"task-reproduction-markdown-{ModalInstanceId}";
     private int? PreviewIndex;
     private bool PreviewActualSize;
     private MarkdownImagePreview? MarkdownPreview;
@@ -306,9 +394,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (markdownViewerInitializationAttempted ||
-            Details is null ||
-            string.IsNullOrWhiteSpace(Details.Description)) return;
+        if (markdownViewerInitializationAttempted || Details is null) return;
         markdownViewerInitializationAttempted = true;
         dotNetReference ??= DotNetObjectReference.Create(this);
         try
@@ -316,6 +402,10 @@
             await JS.InvokeVoidAsync(
                 "lumaTaskAttachments.initializeMarkdownViewer",
                 MarkdownContainerId,
+                dotNetReference);
+            await JS.InvokeVoidAsync(
+                "lumaTaskAttachments.initializeMarkdownViewer",
+                ReproductionMarkdownContainerId,
                 dotNetReference);
         }
         catch (Exception exception) when (exception is JSException or JSDisconnectedException or TaskCanceledException or InvalidOperationException)
@@ -337,6 +427,12 @@
     {
         MarkdownPreview = null;
         PreviewIndex = index;
+        PreviewActualSize = false;
+    }
+    private void OpenStepImage(TaskAttachmentDetails image)
+    {
+        PreviewIndex = null;
+        MarkdownPreview = new MarkdownImagePreview(image.Url, image.FileName);
         PreviewActualSize = false;
     }
     [JSInvokable]
@@ -409,6 +505,42 @@
     };
     private static string PriorityClass(TaskPriority priority) => priority.ToString().ToLowerInvariant();
     private static string PriorityLabel(TaskPriority priority) => priority == TaskPriority.None ? "No priority" : priority.ToString();
+    private static string BugCategoryLabel(BugCategory? category) => category switch
+    {
+        BugCategory.CrashError => "Crash / Error",
+        BugCategory.ApiIntegration => "API / Integration",
+        null => "Not specified",
+        _ => category.ToString()!
+    };
+    private static string BugSeverityLabel(BugSeverity? severity) => severity?.ToString() ?? "Not specified";
+    private static string BugSeverityClass(BugSeverity? severity) => severity?.ToString().ToLowerInvariant() ?? "unspecified";
+    private static string BugReproducibilityLabel(BugReproducibility? value) => value switch
+    {
+        BugReproducibility.CannotReproduce => "Cannot reproduce",
+        null => "Not specified",
+        _ => value.ToString()!
+    };
+    private static bool HasAdaptiveDetails(BugAdaptiveDetailsInput details, BugCategory? category) => category switch
+    {
+        BugCategory.Functional => HasAny(details.ExpectedResult, details.ObservedResult),
+        BugCategory.CrashError => HasAny(details.ErrorMessage, details.ErrorDetails, details.Logs),
+        BugCategory.Performance => HasAny(details.ExpectedDuration, details.ActualDuration) || details.Attempts is not null,
+        BugCategory.ApiIntegration => HasAny(details.HttpMethod, details.Endpoint, details.ApiRequest, details.ApiResponse, details.CorrelationId) || details.StatusCode is not null,
+        BugCategory.Data => HasAny(details.DataEntity, details.DataIdentifier, details.ExpectedValue, details.ActualValue),
+        BugCategory.Regression => HasAny(details.LastKnownGoodVersion, details.FirstBrokenVersion),
+        BugCategory.Compatibility => HasAny(details.WorksOn, details.FailsOn),
+        _ => false
+    };
+    private static bool HasAny(params string?[] values) => values.Any(value => !string.IsNullOrWhiteSpace(value));
+    private static RenderFragment BugValue(string label, string? value, bool preformatted = false) => builder =>
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        builder.OpenElement(0, "div");
+        if (preformatted) builder.AddAttribute(1, "class", "wide preformatted");
+        builder.OpenElement(2, "dt"); builder.AddContent(3, label); builder.CloseElement();
+        builder.OpenElement(4, "dd"); builder.AddContent(5, value); builder.CloseElement();
+        builder.CloseElement();
+    };
     private static string FormatSize(long bytes) => bytes >= 1024 * 1024
         ? $"{bytes / 1024d / 1024d:0.#} MB"
         : $"{Math.Max(1, bytes / 1024d):0.#} KB";
@@ -416,6 +548,8 @@
     public async ValueTask DisposeAsync()
     {
         try { await JS.InvokeVoidAsync("lumaTaskAttachments.disposeMarkdownViewer", MarkdownContainerId); }
+        catch (JSDisconnectedException) { }
+        try { await JS.InvokeVoidAsync("lumaTaskAttachments.disposeMarkdownViewer", ReproductionMarkdownContainerId); }
         catch (JSDisconnectedException) { }
         dotNetReference?.Dispose();
     }

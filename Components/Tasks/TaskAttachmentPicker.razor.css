@@ -33,6 +33,11 @@
     padding: 9px 12px;
 }
 
+.task-attachment-picker.compact .task-attachment-drop-copy { min-height: 42px; padding: 6px 9px; }
+.task-attachment-picker.compact .task-attachment-drop-icon { flex-basis: 27px; width: 27px; height: 27px; border-radius: 8px; }
+.task-attachment-picker.compact .task-attachment-drop-copy small { display: none; }
+.task-attachment-picker.compact .task-attachment-browse { padding: 5px 7px; }
+
 .task-attachment-drop-icon {
     display: grid;
     place-items: center;

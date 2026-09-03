@@ -13,7 +13,7 @@
 
 <PageTitle>Tasks · Luma</PageTitle>
 
-<div class="calendar-app tasks-app">
+<div class="calendar-app tasks-app" @onclick="CloseCreateMenu">
     <main class="tasks-main">
         <header class="tasks-header">
             <div class="tasks-heading-row">
@@ -21,11 +21,24 @@
                     <span class="eyebrow">WORKSPACE</span>
                     <h1>Tasks</h1>
                 </div>
-                <div class="tasks-header-actions">
-                    <button class="primary-button tasks-create-button" type="button" @onclick="OpenPrimaryCreate">
-                        <span aria-hidden="true">+</span>
-                        @(ActiveTab == TaskListTab.Projects ? "Create project" : "Create task")
-                    </button>
+                <div class="tasks-header-actions" @onclick:stopPropagation="true">
+                    @if (ActiveTab == TaskListTab.Projects)
+                    {
+                        <button class="primary-button tasks-create-button" type="button" @onclick="OpenCreateProject"><span aria-hidden="true">+</span>Create project</button>
+                    }
+                    else
+                    {
+                        <div class="global-create-menu">
+                            <button class="primary-button tasks-create-button" type="button" aria-haspopup="menu" aria-expanded="@ShowCreateMenu" @onclick="ToggleCreateMenu"><span aria-hidden="true">+</span>Create <small aria-hidden="true">⌄</small></button>
+                            @if (ShowCreateMenu)
+                            {
+                                <div role="menu" aria-label="Create work item">
+                                    <button type="button" role="menuitem" @onclick="OpenCreateTask"><span class="create-kind-icon task">✓</span><span><strong>Task</strong><small>Regular work item</small></span></button>
+                                    <button type="button" role="menuitem" @onclick="OpenCreateBug"><span class="create-kind-icon bug">⌁</span><span><strong>Bug</strong><small>Report a product problem</small></span></button>
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             </div>
         </header>
@@ -318,7 +331,7 @@
 
 @if (ShowCreateTask)
 {
-    <TaskCreateDialog CancelRequested="CloseCreateTask" Created="HandleTaskCreated" ErrorMessage="@OperationError" />
+    <TaskCreateDialog ItemType="@CreateItemType" CancelRequested="CloseCreateTask" Created="HandleTaskCreated" ErrorMessage="@OperationError" />
 }
 
 @if (ShowCreateProject)
@@ -368,6 +381,8 @@
     private string DetailsNotice = string.Empty;
     private string DeadlineRequestError = string.Empty;
     private bool ShowCreateTask;
+    private bool ShowCreateMenu;
+    private WorkItemType CreateItemType = WorkItemType.Task;
     private bool ShowCreateProject;
     private bool IsCreatingProject;
     private string ProjectOperationError = string.Empty;
@@ -442,16 +457,23 @@
         FeedbackTitle = string.Empty;
         FeedbackMessage = string.Empty;
         OperationError = string.Empty;
+        CreateItemType = WorkItemType.Task;
+        ShowCreateMenu = false;
         ShowCreateTask = true;
     }
 
-    private void OpenPrimaryCreate()
+    private void OpenCreateBug()
     {
-        if (ActiveTab == TaskListTab.Projects)
-            OpenCreateProject();
-        else
-            OpenCreateTask();
+        FeedbackTitle = string.Empty;
+        FeedbackMessage = string.Empty;
+        OperationError = string.Empty;
+        CreateItemType = WorkItemType.Bug;
+        ShowCreateMenu = false;
+        ShowCreateTask = true;
     }
+
+    private void ToggleCreateMenu() => ShowCreateMenu = !ShowCreateMenu;
+    private void CloseCreateMenu() => ShowCreateMenu = false;
 
     private void CloseCreateTask() => ShowCreateTask = false;
 
@@ -462,7 +484,7 @@
         {
             await TaskStore.CreateAsync(request);
             ShowCreateTask = false;
-            FeedbackTitle = "Task created";
+            FeedbackTitle = request.WorkItemType == WorkItemType.Bug ? "Bug created" : "Task created";
             FeedbackMessage = TaskStore.LastNotice ?? $"“{request.Title}” was saved successfully.";
             await LoadTasksAsync();
         }
