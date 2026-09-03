@@ -15,6 +15,115 @@ namespace Calendar.Tests;
 public sealed class TaskStoreTests
 {
     [Fact]
+    public async Task ChangeLog_CreationAndSingleFieldUpdateStoreActorAndValues()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new(
+            before.Title, before.Description, before.Version, TaskPriority.High, before.ProjectId,
+            DescriptionMentionUserIds: before.Mentions.Select(item => item.UserId).ToArray()));
+
+        await using var db = fixture.CreateDbContext();
+        var logs = await db.TaskChangeLogs.Where(log => log.TaskId == taskId).OrderBy(log => log.CreatedAt).ToListAsync();
+        var created = Assert.Single(logs, log => log.ChangeType == TaskChangeType.Created);
+        Assert.Equal(fixture.Creator.Id, created.ActorUserId);
+        Assert.Equal("Task", created.NewValue);
+        var priority = Assert.Single(logs, log => log.FieldName == "Priority");
+        Assert.Equal("None", priority.OldValue);
+        Assert.Equal("High", priority.NewValue);
+        Assert.Equal(fixture.Creator.Id, priority.ActorUserId);
+    }
+
+    [Fact]
+    public async Task ChangeLog_NoOpAndUnauthorizedUpdateCreateNoEntries()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var makerStore = fixture.CreateStore(fixture.Creator);
+        var taskId = await makerStore.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await makerStore.LoadDetailsAsync(taskId);
+        await makerStore.UpdateContentAsync(taskId, new(before.Title, before.Description, before.Version, before.Priority, before.ProjectId));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.CreateStore(fixture.Unrelated).UpdateContentAsync(taskId,
+                new("Not allowed", before.Description, before.Version, before.Priority, before.ProjectId)));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Single(await db.TaskChangeLogs.Where(log => log.TaskId == taskId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task ChangeLog_MultipleFieldsShareMutationAndLargeMarkdownIsCompact()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var before = await store.LoadDetailsAsync(taskId);
+        var markdown = "## Updated\n\n" + new string('x', 2000);
+
+        await store.UpdateContentAsync(taskId, new(
+            "Updated title", markdown, before.Version, TaskPriority.Urgent, before.ProjectId));
+
+        await using var db = fixture.CreateDbContext();
+        var changes = await db.TaskChangeLogs
+            .Where(log => log.TaskId == taskId && log.ChangeType == TaskChangeType.FieldChanged)
+            .ToListAsync();
+        Assert.Equal(3, changes.Count);
+        Assert.Single(changes.Select(log => log.MutationId).Distinct());
+        var description = Assert.Single(changes, log => log.FieldName == "Description");
+        Assert.StartsWith("length:", description.NewValue);
+        Assert.Contains(";sha256:", description.NewValue);
+        Assert.DoesNotContain(markdown, description.NewValue);
+    }
+
+    [Fact]
+    public async Task ChangeLog_BugMetadataChangeIsStructured()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.Low,
+            BugReproducibility = BugReproducibility.Sometimes
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new(
+            before.Title, before.Description, before.Version, before.Priority, before.ProjectId,
+            BugCategory: before.BugCategory, BugSeverity: BugSeverity.Critical,
+            BugReproducibility: before.BugReproducibility, FoundInVersion: before.FoundInVersion,
+            BugEnvironment: before.BugEnvironment, BugDetails: before.BugDetails,
+            ReproductionMarkdown: before.ReproductionMarkdown));
+
+        await using var db = fixture.CreateDbContext();
+        var severity = Assert.Single(await db.TaskChangeLogs
+            .Where(log => log.TaskId == taskId && log.FieldName == "BugSeverity").ToListAsync());
+        Assert.Equal("Low", severity.OldValue);
+        Assert.Equal("Critical", severity.NewValue);
+    }
+
+    [Fact]
+    public async Task ChangeLog_ConcurrencyFailureLeavesNoAttemptedHistory()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id));
+        var stale = await store.LoadDetailsAsync(taskId);
+        await store.UpdateContentAsync(taskId, new("First edit", stale.Description, stale.Version, stale.Priority, stale.ProjectId));
+
+        await Assert.ThrowsAsync<ValidationException>(() => store.UpdateContentAsync(taskId,
+            new("Failed stale edit", stale.Description, stale.Version, stale.Priority, stale.ProjectId)));
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(2, await db.TaskChangeLogs.CountAsync(log => log.TaskId == taskId));
+        Assert.False(await db.TaskChangeLogs.AnyAsync(log => log.NewValue == "Failed stale edit"));
+    }
+
+    [Fact]
     public async Task CreateBug_PersistsMetadataAndReturnsItInDetails()
     {
         var fixture = await TestFixture.CreateAsync();
@@ -3089,6 +3198,136 @@ public sealed class TaskStoreTests
         Assert.Null((await verify.InboxItems.SingleAsync()).ReadAt);
     }
 
+    [Fact]
+    public async Task Task_CanLinkMultipleProjectFeatures_AndDetailsReturnChips()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var project = await SeedProjectAsync(fixture, "LUMA");
+        var calendar = await SeedFeatureAsync(fixture, project, "Calendar");
+        var sharing = await SeedFeatureAsync(fixture, project, "Sharing");
+
+        var taskId = await fixture.CreateStore(fixture.Creator).CreateAsync(
+            NewRequest(fixture.Assignee.Id) with
+            {
+                ProjectId = project.Id,
+                FeatureIds = [calendar.Id, sharing.Id]
+            });
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(2, await db.TaskFeatures.CountAsync(item => item.TaskId == taskId));
+        var details = await fixture.CreateStore(fixture.Unrelated).LoadDetailsAsync(taskId);
+        Assert.Equal(["Calendar", "Sharing"], details.Features!.Select(item => item.Name));
+    }
+
+    [Fact]
+    public async Task SameFeature_CanLinkTaskAndBug()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var project = await SeedProjectAsync(fixture, "Product");
+        var feature = await SeedFeatureAsync(fixture, project, "Checkout");
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with { ProjectId = project.Id, FeatureIds = [feature.Id] });
+        var bugId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            Title = "Checkout fails",
+            ProjectId = project.Id,
+            FeatureIds = [feature.Id],
+            WorkItemType = WorkItemType.Bug,
+            BugCategory = BugCategory.Functional,
+            BugSeverity = BugSeverity.High,
+            BugReproducibility = BugReproducibility.Always
+        });
+
+        await using var db = fixture.CreateDbContext();
+        Assert.Equal(2, await db.TaskFeatures.CountAsync(item => item.FeatureId == feature.Id));
+        Assert.Equal(new[] { taskId, bugId }.Order(), (await db.TaskFeatures.Where(item => item.FeatureId == feature.Id).Select(item => item.TaskId).ToListAsync()).Order());
+    }
+
+    [Fact]
+    public async Task FeatureSelection_RejectsNoProjectAndCrossProjectLinks()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var first = await SeedProjectAsync(fixture, "First");
+        var second = await SeedProjectAsync(fixture, "Second");
+        var feature = await SeedFeatureAsync(fixture, first, "First feature");
+        var store = fixture.CreateStore(fixture.Creator);
+
+        await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { FeatureIds = [feature.Id] }));
+        await Assert.ThrowsAsync<ValidationException>(() => store.CreateAsync(
+            NewRequest(fixture.Assignee.Id) with { ProjectId = second.Id, FeatureIds = [feature.Id] }));
+    }
+
+    [Fact]
+    public async Task ChangingProjectWithoutFeatureSelection_ClearsOldRelations()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var first = await SeedProjectAsync(fixture, "First");
+        var second = await SeedProjectAsync(fixture, "Second");
+        var feature = await SeedFeatureAsync(fixture, first, "Legacy");
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with
+        {
+            ProjectId = first.Id,
+            FeatureIds = [feature.Id]
+        });
+        var before = await store.LoadDetailsAsync(taskId);
+
+        var updated = await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            before.Title, before.Description, before.Version, before.Priority, second.Id,
+            FeatureIds: null));
+
+        Assert.Equal(second.Id, updated.ProjectId);
+        Assert.Empty(updated.Features!);
+        await using var db = fixture.CreateDbContext();
+        Assert.Empty(await db.TaskFeatures.Where(item => item.TaskId == taskId).ToListAsync());
+    }
+
+    [Fact]
+    public async Task FeatureFilter_UsesOrWithinFeatures_AndAndWithOtherFilters()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var project = await SeedProjectAsync(fixture, "Filtered");
+        var alpha = await SeedFeatureAsync(fixture, project, "Alpha");
+        var beta = await SeedFeatureAsync(fixture, project, "Beta");
+        var store = fixture.CreateStore(fixture.Creator);
+        var alphaHigh = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with { Title = "Alpha high", ProjectId = project.Id, Priority = TaskPriority.High, FeatureIds = [alpha.Id] });
+        var betaHigh = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with { Title = "Beta high", ProjectId = project.Id, Priority = TaskPriority.High, FeatureIds = [beta.Id] });
+        _ = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with { Title = "Alpha low", ProjectId = project.Id, Priority = TaskPriority.Low, FeatureIds = [alpha.Id] });
+
+        var results = await store.LoadRelatedAsync(new TaskListQuery(
+            Priority: TaskPriority.High,
+            ProjectId: project.Id,
+            FeatureIds: [alpha.Id, beta.Id]));
+
+        Assert.Equal(new[] { alphaHigh, betaHigh }.Order(), results.Select(item => item.Id).Order());
+    }
+
+    [Fact]
+    public async Task EditingFeatures_WritesCompactAddedAndRemovedChangeLogs()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var project = await SeedProjectAsync(fixture, "Logged");
+        var oldFeature = await SeedFeatureAsync(fixture, project, "Old");
+        var newFeature = await SeedFeatureAsync(fixture, project, "New");
+        var store = fixture.CreateStore(fixture.Creator);
+        var taskId = await store.CreateAsync(NewRequest(fixture.Assignee.Id) with { ProjectId = project.Id, FeatureIds = [oldFeature.Id] });
+        var before = await store.LoadDetailsAsync(taskId);
+
+        await store.UpdateContentAsync(taskId, new UpdateLumaTaskContentRequest(
+            before.Title, before.Description, before.Version, before.Priority, before.ProjectId,
+            FeatureIds: [newFeature.Id]));
+
+        await using var db = fixture.CreateDbContext();
+        var logs = await db.TaskChangeLogs.Where(item => item.TaskId == taskId &&
+            (item.ChangeType == TaskChangeType.FeatureAdded || item.ChangeType == TaskChangeType.FeatureRemoved)).ToListAsync();
+        Assert.Equal(2, logs.Count);
+        Assert.Contains(logs, item => item.ChangeType == TaskChangeType.FeatureAdded && item.NewValue == newFeature.Id.ToString("D"));
+        Assert.Contains(logs, item => item.ChangeType == TaskChangeType.FeatureRemoved && item.OldValue == oldFeature.Id.ToString("D"));
+        Assert.All(logs, item => Assert.Equal(fixture.Creator.Id, item.ActorUserId));
+        Assert.Single(logs.Select(item => item.MutationId).Distinct());
+    }
+
     private static void AssertInbox(
         InboxItem item,
         InboxActivityType activityType,
@@ -3191,6 +3430,23 @@ public sealed class TaskStoreTests
         db.Projects.Add(project);
         await db.SaveChangesAsync();
         return project;
+    }
+
+    private static async Task<LumaFeature> SeedFeatureAsync(TestFixture fixture, LumaProject project, string name)
+    {
+        var feature = new LumaFeature
+        {
+            ProjectId = project.Id,
+            Name = name,
+            NormalizedName = name.Trim().ToUpperInvariant(),
+            Description = string.Empty,
+            CreatedAt = DateTime.UtcNow,
+            CreatedByUserId = fixture.Creator.Id
+        };
+        await using var db = fixture.CreateDbContext();
+        db.Features.Add(feature);
+        await db.SaveChangesAsync();
+        return feature;
     }
 
     private static async Task AssertNoTasksAsync(TestFixture fixture)

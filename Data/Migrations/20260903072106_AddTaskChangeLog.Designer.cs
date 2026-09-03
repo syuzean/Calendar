@@ -4,6 +4,7 @@ using Calendar.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Calendar.Data.Migrations
 {
     [DbContext(typeof(CalendarDbContext))]
-    partial class CalendarDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260903072106_AddTaskChangeLog")]
+    partial class AddTaskChangeLog
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -283,46 +286,6 @@ namespace Calendar.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_InboxItems_ActivityType", "[ActivityType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)");
                         });
-                });
-
-            modelBuilder.Entity("Calendar.Models.LumaFeature", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("CreatedByUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.Property<string>("NormalizedName")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.Property<Guid>("ProjectId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedByUserId");
-
-                    b.HasIndex("ProjectId", "NormalizedName")
-                        .IsUnique();
-
-                    b.ToTable("Features", (string)null);
                 });
 
             modelBuilder.Entity("Calendar.Models.LumaProject", b =>
@@ -687,7 +650,7 @@ namespace Calendar.Data.Migrations
 
                     b.ToTable("TaskChangeLogs", null, t =>
                         {
-                            t.HasCheckConstraint("CK_TaskChangeLogs_ChangeType", "[ChangeType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8)");
+                            t.HasCheckConstraint("CK_TaskChangeLogs_ChangeType", "[ChangeType] IN (0, 1, 2, 3, 4, 5, 6)");
                         });
                 });
 
@@ -707,21 +670,6 @@ namespace Calendar.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("TaskCommentMentions", (string)null);
-                });
-
-            modelBuilder.Entity("Calendar.Models.TaskFeature", b =>
-                {
-                    b.Property<Guid>("TaskId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("FeatureId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("TaskId", "FeatureId");
-
-                    b.HasIndex("FeatureId");
-
-                    b.ToTable("TaskFeatures", (string)null);
                 });
 
             modelBuilder.Entity("Calendar.Models.TaskInvitation", b =>
@@ -895,25 +843,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Task");
                 });
 
-            modelBuilder.Entity("Calendar.Models.LumaFeature", b =>
-                {
-                    b.HasOne("Calendar.Models.AppUser", "CreatedByUser")
-                        .WithMany("CreatedFeatures")
-                        .HasForeignKey("CreatedByUserId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("Calendar.Models.LumaProject", "Project")
-                        .WithMany("Features")
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedByUser");
-
-                    b.Navigation("Project");
-                });
-
             modelBuilder.Entity("Calendar.Models.LumaProject", b =>
                 {
                     b.HasOne("Calendar.Models.AppUser", "CreatedByUser")
@@ -1044,25 +973,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Calendar.Models.TaskFeature", b =>
-                {
-                    b.HasOne("Calendar.Models.LumaFeature", "Feature")
-                        .WithMany("TaskFeatures")
-                        .HasForeignKey("FeatureId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Calendar.Models.LumaTask", "Task")
-                        .WithMany("TaskFeatures")
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Feature");
-
-                    b.Navigation("Task");
-                });
-
             modelBuilder.Entity("Calendar.Models.TaskInvitation", b =>
                 {
                     b.HasOne("Calendar.Models.AppUser", "ClaimedByUser")
@@ -1120,8 +1030,6 @@ namespace Calendar.Data.Migrations
 
                     b.Navigation("ClaimedTaskInvitations");
 
-                    b.Navigation("CreatedFeatures");
-
                     b.Navigation("CreatedProjects");
 
                     b.Navigation("CreatedTasks");
@@ -1155,15 +1063,8 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Participants");
                 });
 
-            modelBuilder.Entity("Calendar.Models.LumaFeature", b =>
-                {
-                    b.Navigation("TaskFeatures");
-                });
-
             modelBuilder.Entity("Calendar.Models.LumaProject", b =>
                 {
-                    b.Navigation("Features");
-
                     b.Navigation("Tasks");
                 });
 
@@ -1184,8 +1085,6 @@ namespace Calendar.Data.Migrations
                     b.Navigation("Mentions");
 
                     b.Navigation("ReproductionSteps");
-
-                    b.Navigation("TaskFeatures");
                 });
 
             modelBuilder.Entity("Calendar.Models.LumaTaskComment", b =>

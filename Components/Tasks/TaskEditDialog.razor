@@ -30,6 +30,7 @@
                 }
             </label>
             <TaskProjectPicker @bind-Value="ProjectId" OpenUpward="true" />
+            <TaskFeaturePicker ProjectId="@ProjectId" @bind-Value="FeatureIds" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             <div class="task-structured-fields">
                 <TaskMentionEditor @ref="DescriptionEditor" Label="Description" Rows="7" Users="@MentionUsers" EnableImages="true"
@@ -96,6 +97,7 @@
     private string TitleError = string.Empty;
     private TaskPriority Priority;
     private Guid? ProjectId;
+    private IReadOnlyCollection<Guid> FeatureIds = [];
     private BugMetadataEditor? BugEditor;
     private TaskAttachmentPicker? AttachmentPicker;
     private TaskMentionEditor? DescriptionEditor;
@@ -108,6 +110,7 @@
         Description = Details.Description;
         Priority = Details.Priority;
         ProjectId = Details.ProjectId;
+        FeatureIds = Details.Features?.Select(feature => feature.Id).ToArray() ?? [];
         MentionUsers = await TaskStore.LoadMentionUsersAsync();
         DescriptionMentionUserIds = Details.Mentions
             .Select(mention => mention.UserId)
@@ -129,7 +132,8 @@
             Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetEnvironment() : null,
             Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetDetails() : null,
             Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetSteps() : null,
-            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null));
+            Details.WorkItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null,
+            FeatureIds));
     }
 
     private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>

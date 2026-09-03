@@ -1,0 +1,110 @@
+@using global::Calendar.Services
+@inject ProjectStore ProjectStore
+
+@if (ProjectId is not null)
+{
+    <div class="field task-feature-picker @(OpenUpward ? "open-upward" : null)" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+        <span>@Label <em>optional</em></span>
+        <button class="task-feature-trigger" type="button" aria-haspopup="listbox" aria-expanded="@IsOpen" @onclick="Toggle">
+            <span class="task-feature-mark" aria-hidden="true">#</span>
+            <strong>@SelectionLabel</strong>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+        </button>
+        @if (IsOpen)
+        {
+            <button class="task-feature-dismiss" type="button" tabindex="-1" aria-label="Close feature picker" @onclick="Close"></button>
+            <div class="task-feature-menu" role="listbox" aria-multiselectable="true" aria-label="Choose features">
+                <header><strong>Features</strong>@if (Selected.Count > 0) { <button type="button" @onclick="Clear">Clear</button> }</header>
+                @if (IsLoading)
+                {
+                    <span class="task-feature-state">Loading features…</span>
+                }
+                else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+                {
+                    <span class="task-feature-state error">@ErrorMessage</span>
+                }
+                else if (Options.Count == 0)
+                {
+                    <span class="task-feature-state">No features in this project yet.</span>
+                }
+                else
+                {
+                    @foreach (var feature in Options)
+                    {
+                        var isSelected = Selected.Contains(feature.Id);
+                        <button type="button" role="option" aria-selected="@isSelected" class="@(isSelected ? "selected" : null)" @onclick="() => ToggleFeature(feature.Id)">
+                            <i aria-hidden="true">#</i><span><strong>@feature.Name</strong>@if (!string.IsNullOrWhiteSpace(feature.Description)) { <small>@feature.Description</small> }</span>
+                            <b aria-hidden="true">@(isSelected ? "✓" : string.Empty)</b>
+                        </button>
+                    }
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? ProjectId { get; set; }
+    [Parameter] public IReadOnlyCollection<Guid> Value { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyCollection<Guid>> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Features";
+    [Parameter] public bool OpenUpward { get; set; }
+
+    private Guid? LoadedProjectId;
+    private IReadOnlyList<FeatureSummary> Options = [];
+    private HashSet<Guid> Selected = [];
+    private bool IsOpen;
+    private bool IsLoading;
+    private string ErrorMessage = string.Empty;
+    private string SelectionLabel => Selected.Count switch
+    {
+        0 => "No features",
+        1 => Options.FirstOrDefault(item => Selected.Contains(item.Id))?.Name ?? "1 feature",
+        _ => $"{Selected.Count} features"
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Selected = Value.Where(id => IRequestValid(id)).ToHashSet();
+        if (LoadedProjectId == ProjectId) return;
+        LoadedProjectId = ProjectId;
+        IsOpen = false;
+        Options = [];
+        if (ProjectId is null)
+        {
+            if (Selected.Count > 0) await SetValueAsync([]);
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = string.Empty;
+        try
+        {
+            Options = await ProjectStore.LoadFeaturesAsync(ProjectId);
+            var validIds = Options.Select(item => item.Id).ToHashSet();
+            if (Selected.RemoveWhere(id => !validIds.Contains(id)) > 0)
+                await SetValueAsync(Selected);
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException)
+        {
+            ErrorMessage = "Features could not be loaded.";
+        }
+        finally { IsLoading = false; }
+    }
+
+    public void Close() => IsOpen = false;
+    private void Toggle() => IsOpen = !IsOpen;
+    private async Task ToggleFeature(Guid id)
+    {
+        if (Selected.Contains(id)) Selected.Remove(id); else Selected.Add(id);
+        await SetValueAsync(Selected);
+    }
+    private Task Clear() => SetValueAsync([]);
+    private async Task SetValueAsync(IEnumerable<Guid> ids)
+    {
+        Selected = ids.Distinct().ToHashSet();
+        await ValueChanged.InvokeAsync(Selected.ToArray());
+    }
+    private void HandleKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") Close(); }
+    private static bool IRequestValid(Guid id) => id != Guid.Empty;
+}

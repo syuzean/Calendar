@@ -27,7 +27,18 @@ public sealed record ProjectDetails(
     DateTime CreatedAt,
     Guid Version,
     int TaskCount,
-    int DoneTaskCount);
+    int DoneTaskCount,
+    bool CanManageFeatures);
+
+public sealed record SaveFeatureRequest(string Name, string? Description);
+
+public sealed record FeatureSummary(
+    Guid Id,
+    Guid ProjectId,
+    string ProjectName,
+    string Name,
+    string Description,
+    int WorkItemCount);
 
 public sealed class ProjectNotFoundException : Exception
 {
@@ -90,7 +101,7 @@ public sealed class ProjectStore(
 
     public async Task<ProjectDetails> LoadDetailsAsync(Guid projectId)
     {
-        await GetCurrentUserIdAsync();
+        var currentUserId = await GetCurrentUserIdAsync();
         await using var db = await dbFactory.CreateDbContextAsync();
         return await db.Projects.AsNoTracking()
             .Where(project => project.Id == projectId)
@@ -102,9 +113,115 @@ public sealed class ProjectStore(
                 project.CreatedAt,
                 project.Version,
                 project.Tasks.Count,
-                project.Tasks.Count(task => task.WorkStatus == TaskWorkStatus.Done)))
+                project.Tasks.Count(task => task.WorkStatus == TaskWorkStatus.Done),
+                project.CreatedByUserId == currentUserId))
             .SingleOrDefaultAsync()
             ?? throw new ProjectNotFoundException();
+    }
+
+    public async Task<IReadOnlyList<FeatureSummary>> LoadFeaturesAsync(Guid? projectId = null)
+    {
+        _ = await GetCurrentUserIdAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var features = db.Features.AsNoTracking();
+        if (projectId is not null)
+            features = features.Where(feature => feature.ProjectId == projectId.Value);
+
+        return await features
+            .OrderBy(feature => feature.Project!.Name)
+            .ThenBy(feature => feature.Name)
+            .Select(feature => new FeatureSummary(
+                feature.Id,
+                feature.ProjectId,
+                feature.Project!.Name,
+                feature.Name,
+                feature.Description,
+                feature.TaskFeatures.Count))
+            .ToListAsync();
+    }
+
+    public async Task<Guid> CreateFeatureAsync(Guid projectId, SaveFeatureRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var currentUserId = await GetCurrentUserIdAsync();
+        ValidateFeature(request);
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var project = await db.Projects.SingleOrDefaultAsync(item => item.Id == projectId)
+            ?? throw new ProjectNotFoundException();
+        EnsureFeatureManager(project, currentUserId);
+
+        var normalizedName = NormalizeFeatureName(request.Name);
+        if (await db.Features.AnyAsync(item => item.ProjectId == projectId && item.NormalizedName == normalizedName))
+            throw new ValidationException("A feature with this name already exists in the project.");
+
+        var feature = new LumaFeature
+        {
+            Id = Guid.NewGuid(),
+            ProjectId = projectId,
+            Name = request.Name.Trim(),
+            NormalizedName = normalizedName,
+            Description = request.Description?.Trim() ?? string.Empty,
+            CreatedAt = DateTime.UtcNow,
+            CreatedByUserId = currentUserId
+        };
+        db.Features.Add(feature);
+        await SaveFeatureChangesAsync(db);
+        return feature.Id;
+    }
+
+    public async Task UpdateFeatureAsync(Guid featureId, SaveFeatureRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var currentUserId = await GetCurrentUserIdAsync();
+        ValidateFeature(request);
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var feature = await db.Features.Include(item => item.Project)
+            .SingleOrDefaultAsync(item => item.Id == featureId)
+            ?? throw new ValidationException("This feature no longer exists.");
+        EnsureFeatureManager(feature.Project!, currentUserId);
+
+        var normalizedName = NormalizeFeatureName(request.Name);
+        if (await db.Features.AnyAsync(item => item.ProjectId == feature.ProjectId &&
+                                              item.Id != featureId && item.NormalizedName == normalizedName))
+            throw new ValidationException("A feature with this name already exists in the project.");
+
+        feature.Name = request.Name.Trim();
+        feature.NormalizedName = normalizedName;
+        feature.Description = request.Description?.Trim() ?? string.Empty;
+        await SaveFeatureChangesAsync(db);
+    }
+
+    public async Task DeleteFeatureAsync(Guid featureId)
+    {
+        var currentUserId = await GetCurrentUserIdAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var feature = await db.Features
+            .Include(item => item.Project)
+            .Include(item => item.TaskFeatures)
+            .SingleOrDefaultAsync(item => item.Id == featureId)
+            ?? throw new ValidationException("This feature no longer exists.");
+        EnsureFeatureManager(feature.Project!, currentUserId);
+
+        var changedAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        foreach (var relation in feature.TaskFeatures)
+        {
+            db.TaskChangeLogs.Add(new TaskChangeLog
+            {
+                Id = Guid.NewGuid(),
+                TaskId = relation.TaskId,
+                ActorUserId = currentUserId,
+                MutationId = mutationId,
+                ChangeType = TaskChangeType.FeatureRemoved,
+                FieldName = "FeatureId",
+                OldValue = feature.Id.ToString("D"),
+                CreatedAt = changedAt
+            });
+        }
+
+        db.TaskFeatures.RemoveRange(feature.TaskFeatures);
+        db.Features.Remove(feature);
+        await SaveFeatureChangesAsync(db);
     }
 
     private async Task<Guid> GetCurrentUserIdAsync()
@@ -132,5 +249,38 @@ public sealed class ProjectStore(
 
         if (errors.Count > 0)
             throw new ValidationException(string.Join(" ", errors));
+    }
+
+    private static void ValidateFeature(SaveFeatureRequest request)
+    {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(request.Name))
+            errors.Add("Feature name is required.");
+        else if (request.Name.Trim().Length > 120)
+            errors.Add("Feature name cannot exceed 120 characters.");
+        if ((request.Description?.Trim().Length ?? 0) > 2000)
+            errors.Add("Feature description cannot exceed 2000 characters.");
+        if (errors.Count > 0)
+            throw new ValidationException(string.Join(" ", errors));
+    }
+
+    private static void EnsureFeatureManager(LumaProject project, Guid currentUserId)
+    {
+        if (project.CreatedByUserId != currentUserId)
+            throw new UnauthorizedAccessException("Only the Project creator can manage its features.");
+    }
+
+    private static string NormalizeFeatureName(string name) => name.Trim().ToUpperInvariant();
+
+    private static async Task SaveFeatureChangesAsync(CalendarDbContext db)
+    {
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException exception)
+        {
+            throw new ValidationException("A feature with this name already exists in the project.", exception);
+        }
     }
 }

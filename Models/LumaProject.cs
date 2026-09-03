@@ -10,4 +10,5 @@ public sealed class LumaProject
     public Guid Version { get; set; } = Guid.NewGuid();
     public AppUser? CreatedByUser { get; set; }
     public ICollection<LumaTask> Tasks { get; set; } = [];
+    public ICollection<LumaFeature> Features { get; set; } = [];
 }

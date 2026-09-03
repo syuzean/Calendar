@@ -1,6 +1,8 @@
 @using global::Calendar.Models
 @using global::Calendar.Services
+@using global::Calendar.Components.Tasks
 @inject TaskStore TaskStore
+@inject ProjectStore ProjectStore
 
 <section class="project-details-view" aria-label="Project details">
     <button class="project-back-button" type="button" @onclick="BackRequested"><span aria-hidden="true">‹</span> Back to projects</button>
@@ -29,6 +31,64 @@
 
         <div class="project-description-card"><span>DESCRIPTION</span><p>@(string.IsNullOrWhiteSpace(Details.Description) ? "No description provided." : Details.Description)</p></div>
 
+        <section class="project-features" aria-labelledby="project-features-heading">
+            <header>
+                <div><span>ORGANIZATION</span><h3 id="project-features-heading">Features</h3></div>
+                @if (Details.CanManageFeatures)
+                {
+                    <button type="button" @onclick="OpenNewFeature">+ Add feature</button>
+                }
+            </header>
+            @if (!string.IsNullOrWhiteSpace(FeatureError))
+            {
+                <div class="project-feature-error" role="alert">@FeatureError</div>
+            }
+            @if (ShowFeatureEditor)
+            {
+                <form class="project-feature-editor" @onsubmit="SaveFeatureAsync" @onsubmit:preventDefault="true">
+                    <label><span>Name</span><input maxlength="120" autofocus @bind="FeatureName" @bind:event="oninput" /></label>
+                    <label><span>Description <em>optional</em></span><input maxlength="2000" @bind="FeatureDescription" @bind:event="oninput" /></label>
+                    <div><button type="button" @onclick="CloseFeatureEditor">Cancel</button><button class="primary" type="submit">@(EditingFeatureId is null ? "Create" : "Save")</button></div>
+                </form>
+            }
+            @if (FeaturesLoading)
+            {
+                <div class="project-feature-state">Loading features…</div>
+            }
+            else if (Features.Count == 0)
+            {
+                <div class="project-feature-state">No features yet. Features can group related Tasks and Bugs.</div>
+            }
+            else
+            {
+                <div class="project-feature-list">
+                    @foreach (var feature in Features)
+                    {
+                        <article>
+                            <button class="project-feature-main" type="button" title="Filter project tasks by this feature" @onclick="() => FilterByFeatureAsync(feature.Id)">
+                                <i aria-hidden="true">#</i><span><strong>@feature.Name</strong><small>@(string.IsNullOrWhiteSpace(feature.Description) ? "No description" : feature.Description)</small></span><b>@WorkItemCount(feature.WorkItemCount)</b>
+                            </button>
+                            @if (Details.CanManageFeatures)
+                            {
+                                <div class="project-feature-actions">
+                                    <button type="button" aria-label="Edit @feature.Name" @onclick="() => OpenEditFeature(feature)">Edit</button>
+                                    @if (PendingDeleteFeatureId == feature.Id)
+                                    {
+                                        <button class="danger" type="button" @onclick="() => DeleteFeatureAsync(feature.Id)">Confirm remove</button>
+                                        <button type="button" @onclick="CancelFeatureDelete">Cancel</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" aria-label="Remove @feature.Name" @onclick="() => ConfirmFeatureDelete(feature.Id)">Remove</button>
+                                    }
+                                </div>
+                            }
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
         <div class="project-task-view-row">
             <div class="project-task-view-switch" role="group" aria-label="Project task view">
                 <button type="button" class="@(Presentation == ProjectTaskPresentation.List ? "active" : null)"
@@ -44,6 +104,7 @@
             <label><span>Work</span><select @bind="Work" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="ToDo">To Do</option><option value="InProgress">In Progress</option><option value="Done">Done</option></select></label>
             <label><span>Assignment</span><select @bind="Assignment" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="Pending">Pending</option><option value="Accepted">Accepted</option><option value="DeadlineChangeRequested">Deadline requested</option></select></label>
             <label><span>Priority</span><select @bind="Priority" @bind:after="ApplyFiltersAsync"><option value="">All</option><option value="None">No priority</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option><option value="Urgent">Urgent</option></select></label>
+            <TaskFeatureFilter Options="@Features" Value="@FeatureIds" ValueChanged="ApplyFeatureFilterAsync" />
             <label><span>Deadline</span><select @bind="Deadline" @bind:after="ApplyFiltersAsync"><option value="All">All</option><option value="NoDeadline">No deadline</option><option value="Overdue">Overdue</option><option value="Today">Today</option><option value="ThisWeek">This week</option></select></label>
             <label><span>Sort</span><select @bind="Sort" @bind:after="ApplyFiltersAsync"><option value="DeadlineNearest">Deadline: nearest</option><option value="PriorityHighest">Priority: highest</option><option value="Newest">Newest</option></select></label>
             @if (HasFilters) { <button type="button" @onclick="ClearFiltersAsync">Clear</button> }
@@ -164,9 +225,12 @@
     [Parameter] public EventCallback BackRequested { get; set; }
     [Parameter] public EventCallback<Guid> OpenTaskRequested { get; set; }
     [Parameter] public EventCallback TaskChanged { get; set; }
+    [Parameter] public EventCallback FeatureChanged { get; set; }
 
     private IReadOnlyList<RelatedLumaTask> Tasks = [];
     private IReadOnlyList<AssigneeFilterOption> Assignees = [];
+    private IReadOnlyList<FeatureSummary> Features = [];
+    private IReadOnlyCollection<Guid> FeatureIds = [];
     private Guid? LoadedProjectId;
     private long LoadedRefreshKey = -1;
     private bool TasksLoading;
@@ -181,10 +245,17 @@
     private string BoardError = string.Empty;
     private string BoardNotice = string.Empty;
     private ProjectTaskPresentation Presentation = ProjectTaskPresentation.List;
+    private bool FeaturesLoading;
+    private bool ShowFeatureEditor;
+    private Guid? EditingFeatureId;
+    private Guid? PendingDeleteFeatureId;
+    private string FeatureName = string.Empty;
+    private string FeatureDescription = string.Empty;
+    private string FeatureError = string.Empty;
     private static readonly TaskWorkStatus[] BoardStatuses =
         [TaskWorkStatus.ToDo, TaskWorkStatus.InProgress, TaskWorkStatus.Done];
 
-    private bool HasFilters => !string.IsNullOrWhiteSpace(Search) || Assignee.Length > 0 || Work.Length > 0 || Assignment.Length > 0 || Priority.Length > 0 || Deadline != nameof(TaskDeadlineFilter.All) || Sort != nameof(TaskSortOrder.DeadlineNearest);
+    private bool HasFilters => !string.IsNullOrWhiteSpace(Search) || Assignee.Length > 0 || Work.Length > 0 || Assignment.Length > 0 || Priority.Length > 0 || FeatureIds.Count > 0 || Deadline != nameof(TaskDeadlineFilter.All) || Sort != nameof(TaskSortOrder.DeadlineNearest);
     private int ProgressPercent => Details is { TaskCount: > 0 } ? (int)Math.Round(Details.DoneTaskCount * 100d / Details.TaskCount) : 0;
     private string ProgressLabel => Details is null ? string.Empty : $"{Details.DoneTaskCount} of {Details.TaskCount} tasks completed";
 
@@ -193,10 +264,16 @@
         if (Details is null || (LoadedProjectId == Details.Id && LoadedRefreshKey == RefreshKey)) return;
         LoadedProjectId = Details.Id;
         LoadedRefreshKey = RefreshKey;
-        await LoadTasksAsync(refreshAssignees: true);
+        await Task.WhenAll(LoadTasksAsync(refreshAssignees: true), LoadFeaturesAsync());
     }
 
     private Task ApplyFiltersAsync() => LoadTasksAsync(refreshAssignees: false);
+
+    private async Task ApplyFeatureFilterAsync(IReadOnlyCollection<Guid> featureIds)
+    {
+        FeatureIds = featureIds;
+        await LoadTasksAsync(refreshAssignees: false);
+    }
 
     private void ShowList()
     {
@@ -254,9 +331,99 @@
         BoardNotice = string.Empty;
     }
 
+    private async Task LoadFeaturesAsync()
+    {
+        if (Details is null) return;
+        FeaturesLoading = true;
+        FeatureError = string.Empty;
+        try
+        {
+            Features = await ProjectStore.LoadFeaturesAsync(Details.Id);
+            var available = Features.Select(feature => feature.Id).ToHashSet();
+            if (FeatureIds.Any(id => !available.Contains(id)))
+                FeatureIds = FeatureIds.Where(available.Contains).ToArray();
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException)
+        {
+            FeatureError = exception.Message;
+        }
+        finally { FeaturesLoading = false; }
+    }
+
+    private void OpenNewFeature()
+    {
+        EditingFeatureId = null;
+        FeatureName = FeatureDescription = FeatureError = string.Empty;
+        ShowFeatureEditor = true;
+    }
+
+    private void OpenEditFeature(FeatureSummary feature)
+    {
+        EditingFeatureId = feature.Id;
+        FeatureName = feature.Name;
+        FeatureDescription = feature.Description;
+        FeatureError = string.Empty;
+        ShowFeatureEditor = true;
+    }
+
+    private void CloseFeatureEditor()
+    {
+        ShowFeatureEditor = false;
+        EditingFeatureId = null;
+        FeatureName = FeatureDescription = string.Empty;
+    }
+
+    private async Task SaveFeatureAsync()
+    {
+        if (Details is null) return;
+        FeatureError = string.Empty;
+        try
+        {
+            var request = new SaveFeatureRequest(FeatureName, FeatureDescription);
+            if (EditingFeatureId is { } featureId)
+                await ProjectStore.UpdateFeatureAsync(featureId, request);
+            else
+                await ProjectStore.CreateFeatureAsync(Details.Id, request);
+            CloseFeatureEditor();
+            await LoadFeaturesAsync();
+            await FeatureChanged.InvokeAsync();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or UnauthorizedAccessException)
+        {
+            FeatureError = exception.Message;
+        }
+    }
+
+    private void ConfirmFeatureDelete(Guid featureId) => PendingDeleteFeatureId = featureId;
+    private void CancelFeatureDelete() => PendingDeleteFeatureId = null;
+
+    private async Task DeleteFeatureAsync(Guid featureId)
+    {
+        FeatureError = string.Empty;
+        try
+        {
+            await ProjectStore.DeleteFeatureAsync(featureId);
+            PendingDeleteFeatureId = null;
+            FeatureIds = FeatureIds.Where(id => id != featureId).ToArray();
+            await Task.WhenAll(LoadFeaturesAsync(), LoadTasksAsync(refreshAssignees: false));
+            await FeatureChanged.InvokeAsync();
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.DataAnnotations.ValidationException or UnauthorizedAccessException)
+        {
+            FeatureError = exception.Message;
+        }
+    }
+
+    private async Task FilterByFeatureAsync(Guid featureId)
+    {
+        FeatureIds = [featureId];
+        await LoadTasksAsync(refreshAssignees: false);
+    }
+
     private async Task ClearFiltersAsync()
     {
         Search = Work = Assignment = Priority = Assignee = string.Empty;
+        FeatureIds = [];
         Deadline = nameof(TaskDeadlineFilter.All); Sort = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(refreshAssignees: false);
     }
@@ -285,7 +452,8 @@
                 Sort: Enum.TryParse<TaskSortOrder>(Sort, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
                 ProjectId: Details.Id,
                 AssigneeIds: assigneeId is null ? [] : [assigneeId.Value],
-                IncludeUnassigned: Assignee == "Unassigned"));
+                IncludeUnassigned: Assignee == "Unassigned",
+                FeatureIds: FeatureIds));
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or ProjectNotFoundException) { TasksError = exception.Message; }
         finally { TasksLoading = false; }
@@ -293,6 +461,7 @@
 
     private static TEnum? Parse<TEnum>(string value) where TEnum : struct, Enum => Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;
     private static string TaskCountLabel(int count) => count == 1 ? "1 task" : $"{count} tasks";
+    private static string WorkItemCount(int count) => count == 1 ? "1 work item" : $"{count} work items";
     private static string PriorityClass(TaskPriority value) => value.ToString().ToLowerInvariant();
     private static string PriorityLabel(TaskPriority value) => value == TaskPriority.None ? "No priority" : value.ToString();
     private static string WorkClass(TaskWorkStatus value) => value == TaskWorkStatus.InProgress ? "in-progress" : value.ToString().ToLowerInvariant();

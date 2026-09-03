@@ -191,6 +191,13 @@
                         <dt>Project</dt>
                         <dd><span class="task-detail-project" aria-hidden="true">◇</span>@(string.IsNullOrWhiteSpace(Details.ProjectName) ? "No project" : Details.ProjectName)</dd>
                     </div>
+                    @if ((Details.Features?.Count ?? 0) > 0)
+                    {
+                        <div class="task-detail-features">
+                            <dt>Features</dt>
+                            <dd>@foreach (var feature in Details.Features!) { <span class="task-feature-chip"># @feature.Name</span> }</dd>
+                        </div>
+                    }
                 </dl>
 
                 @if (Details.AssignmentStatus == TaskAssignmentStatus.DeadlineChangeRequested && Details.RequestedDeadline is not null)

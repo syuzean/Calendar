@@ -22,4 +22,6 @@ public sealed class AppUser
     public ICollection<TaskAttachment> UploadedTaskAttachments { get; set; } = [];
     public ICollection<TaskMention> TaskMentions { get; set; } = [];
     public ICollection<TaskCommentMention> TaskCommentMentions { get; set; } = [];
+    public ICollection<TaskChangeLog> AuthoredTaskChanges { get; set; } = [];
+    public ICollection<LumaFeature> CreatedFeatures { get; set; } = [];
 }

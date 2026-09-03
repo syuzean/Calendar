@@ -195,6 +195,10 @@
     color: #796f83;
 }
 
+.task-detail-features { grid-column: 1 / -1; }
+.task-detail-features dd { display: flex; flex-wrap: wrap; gap: 7px; }
+.task-feature-chip { display: inline-flex; align-items: center; min-height: 27px; padding: 4px 10px; border-radius: 999px; background: #f0ebff; color: #6038cb; font-size: .78rem; font-weight: 700; }
+
 .task-markdown { white-space: normal; }
 
 .task-markdown ::deep > :first-child { margin-top: 8px; }

@@ -107,6 +107,8 @@
                             <option value="Low">Low</option><option value="Medium">Medium</option>
                             <option value="High">High</option><option value="Urgent">Urgent</option>
                         </select></label>
+                        <TaskFeatureFilter Options="@FeatureOptions" Value="@FeatureFilter" ShowProjectNames="true"
+                                           ValueChanged="ApplyFeatureFilterAsync" />
                         <label><span>Deadline</span><select @bind="DeadlineFilter" @bind:after="ApplyFiltersAsync">
                             <option value="All">All</option><option value="NoDeadline">No deadline</option>
                             <option value="Overdue">Overdue</option>
@@ -131,7 +133,7 @@
                         <ProjectDetailsView @ref="ProjectDetailsComponent" Details="@SelectedProject" IsLoading="@IsProjectDetailsLoading"
                                             ErrorMessage="@ProjectDetailsError" RefreshKey="@ProjectTasksRefreshKey"
                                             OpenTaskRequested="OpenTaskAsync" BackRequested="CloseProjectDetails"
-                                            TaskChanged="RefreshAfterProjectBoardChangeAsync" />
+                                            TaskChanged="RefreshAfterProjectBoardChangeAsync" FeatureChanged="RefreshFeaturesAsync" />
                     }
                     else
                     {
@@ -414,6 +416,7 @@
     private TaskListTab ActiveTab = TaskListTab.Tasks;
     private IReadOnlyList<RelatedLumaTask> RelatedTasks = [];
     private IReadOnlyList<TaskAssigneeFilterOption> AssigneeOptions = [];
+    private IReadOnlyList<FeatureSummary> FeatureOptions = [];
     private LumaTaskDetails? SelectedTask;
     private TaskPresentation Presentation = TaskPresentation.List;
     private DotNetObjectReference<Tasks>? BoardDragReference;
@@ -424,6 +427,7 @@
     private string AssignmentStatusFilter = string.Empty;
     private string PriorityFilter = string.Empty;
     private TaskAssigneeFilterSelection AssigneeFilter = new([], false);
+    private IReadOnlyCollection<Guid> FeatureFilter = [];
     private string DeadlineFilter = nameof(TaskDeadlineFilter.All);
     private string SortOrder = nameof(TaskSortOrder.DeadlineNearest);
     private long TaskLoadGeneration;
@@ -435,12 +439,13 @@
         PriorityFilter.Length > 0 ||
         AssigneeFilter.UserIds.Count > 0 ||
         AssigneeFilter.IncludeUnassigned ||
+        FeatureFilter.Count > 0 ||
         DeadlineFilter != nameof(TaskDeadlineFilter.All) ||
         SortOrder != nameof(TaskSortOrder.DeadlineNearest);
 
     protected override async Task OnInitializedAsync()
     {
-        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync(), LoadAssigneeOptionsAsync());
+        await Task.WhenAll(LoadTasksAsync(), LoadProjectsAsync(), LoadAssigneeOptionsAsync(), LoadFeatureOptionsAsync());
         if (LinkedTaskId is not null)
             await OpenTaskAsync(LinkedTaskId.Value);
     }
@@ -595,6 +600,24 @@
         await LoadTasksAsync(showLoading: false);
     }
 
+    private async Task ApplyFeatureFilterAsync(IReadOnlyCollection<Guid> selection)
+    {
+        FeatureFilter = selection;
+        await LoadTasksAsync(showLoading: false);
+    }
+
+    private async Task LoadFeatureOptionsAsync()
+    {
+        try { FeatureOptions = await ProjectStore.LoadFeaturesAsync(); }
+        catch (UnauthorizedAccessException exception) { LoadError = exception.Message; }
+    }
+
+    private async Task RefreshFeaturesAsync()
+    {
+        await LoadFeatureOptionsAsync();
+        await LoadTasksAsync(showLoading: false);
+    }
+
     private async Task LoadAssigneeOptionsAsync()
     {
         try
@@ -614,6 +637,7 @@
         AssignmentStatusFilter = string.Empty;
         PriorityFilter = string.Empty;
         AssigneeFilter = new TaskAssigneeFilterSelection([], false);
+        FeatureFilter = [];
         DeadlineFilter = nameof(TaskDeadlineFilter.All);
         SortOrder = nameof(TaskSortOrder.DeadlineNearest);
         await LoadTasksAsync(showLoading: false);
@@ -627,7 +651,8 @@
         Deadline: Enum.TryParse<TaskDeadlineFilter>(DeadlineFilter, out var deadline) ? deadline : TaskDeadlineFilter.All,
         Sort: Enum.TryParse<TaskSortOrder>(SortOrder, out var sort) ? sort : TaskSortOrder.DeadlineNearest,
         AssigneeIds: AssigneeFilter.UserIds,
-        IncludeUnassigned: AssigneeFilter.IncludeUnassigned);
+        IncludeUnassigned: AssigneeFilter.IncludeUnassigned,
+        FeatureIds: FeatureFilter);
 
     private static TEnum? ParseOptional<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, out var parsed) ? parsed : null;

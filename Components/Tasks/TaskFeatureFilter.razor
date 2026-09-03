@@ -1,0 +1,48 @@
+@using global::Calendar.Services
+
+<div class="task-feature-filter" @onclick:stopPropagation="true" @onkeydown="HandleKeyDown">
+    <span>Feature</span>
+    <button type="button" class="task-feature-filter-trigger" aria-haspopup="listbox" aria-expanded="@IsOpen" @onclick="Toggle">
+        <strong>@Label</strong><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>
+    </button>
+    @if (IsOpen)
+    {
+        <button type="button" class="task-feature-filter-dismiss" tabindex="-1" aria-label="Close feature filter" @onclick="Close"></button>
+        <div class="task-feature-filter-menu" role="listbox" aria-multiselectable="true" aria-label="Filter by feature">
+            <header><strong>Feature</strong>@if (Value.Count > 0) { <button type="button" @onclick="ClearAsync">Clear</button> }</header>
+            @if (Options.Count == 0)
+            {
+                <span>No features available.</span>
+            }
+            else
+            {
+                @foreach (var option in Options)
+                {
+                    var selected = Value.Contains(option.Id);
+                    <button type="button" role="option" aria-selected="@selected" class="@(selected ? "selected" : null)" @onclick="() => ToggleAsync(option.Id)">
+                        <i aria-hidden="true">#</i><span><strong>@option.Name</strong>@if (ShowProjectNames) { <small>@option.ProjectName</small> }</span><b aria-hidden="true">@(selected ? "✓" : string.Empty)</b>
+                    </button>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<FeatureSummary> Options { get; set; } = [];
+    [Parameter] public IReadOnlyCollection<Guid> Value { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyCollection<Guid>> ValueChanged { get; set; }
+    [Parameter] public bool ShowProjectNames { get; set; }
+    private bool IsOpen;
+    private string Label => Value.Count switch { 0 => "All", 1 => Options.FirstOrDefault(item => Value.Contains(item.Id))?.Name ?? "1 selected", _ => $"{Value.Count} selected" };
+    public void Close() => IsOpen = false;
+    private void Toggle() => IsOpen = !IsOpen;
+    private async Task ToggleAsync(Guid id)
+    {
+        var selected = Value.ToHashSet();
+        if (!selected.Add(id)) selected.Remove(id);
+        await ValueChanged.InvokeAsync(selected.ToArray());
+    }
+    private Task ClearAsync() => ValueChanged.InvokeAsync([]);
+    private void HandleKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") Close(); }
+}

@@ -130,6 +130,7 @@
             </div>
 
             <TaskProjectPicker @ref="ProjectPicker" @bind-Value="SelectedProjectId" OpenUpward="true" />
+            <TaskFeaturePicker @ref="FeaturePicker" ProjectId="@SelectedProjectId" @bind-Value="SelectedFeatureIds" OpenUpward="true" />
             <TaskPriorityPicker @bind-Value="Priority" OpenUpward="true" />
             </div>
 
@@ -165,10 +166,12 @@
     private DateOnly? Deadline;
     private TaskPriority Priority = TaskPriority.None;
     private Guid? SelectedProjectId;
+    private IReadOnlyCollection<Guid> SelectedFeatureIds = [];
     private BugMetadataEditor? BugEditor;
     private bool ShowAssigneePicker;
     private LumaDateOnlyPicker? DeadlinePicker;
     private TaskProjectPicker? ProjectPicker;
+    private TaskFeaturePicker? FeaturePicker;
     private TaskAttachmentPicker? AttachmentPicker;
     private TaskMentionEditor? DescriptionEditor;
 
@@ -251,7 +254,8 @@
             ItemType == WorkItemType.Bug ? BugEditor?.GetEnvironment() : null,
             ItemType == WorkItemType.Bug ? BugEditor?.GetDetails() : null,
             ItemType == WorkItemType.Bug ? BugEditor?.GetSteps() : null,
-            ItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null));
+            ItemType == WorkItemType.Bug ? BugEditor?.GetReproductionMarkdown() : null,
+            SelectedFeatureIds));
     }
 
     private IReadOnlyList<TaskAttachmentUpload> CombinedUploads() =>
@@ -315,6 +319,7 @@
         ShowAssigneePicker = false;
         DeadlinePicker?.Close();
         ProjectPicker?.Close();
+        FeaturePicker?.Close();
         BugEditor?.ClosePopovers();
     }
 

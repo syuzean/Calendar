@@ -141,6 +141,76 @@ public sealed class ProjectStoreTests
     }
 
     [Fact]
+    public async Task ProjectCreator_CanCreateRenameAndDescribeFeature()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.StoreFor(fixture.Creator);
+        var projectId = await store.CreateAsync(new("LUMA", null));
+
+        var featureId = await store.CreateFeatureAsync(projectId, new("Calendar", "Scheduling work"));
+        await store.UpdateFeatureAsync(featureId, new("Time grid", "Day and Week experience"));
+
+        var feature = Assert.Single(await store.LoadFeaturesAsync(projectId));
+        Assert.Equal(featureId, feature.Id);
+        Assert.Equal("Time grid", feature.Name);
+        Assert.Equal("Day and Week experience", feature.Description);
+        Assert.Equal(fixture.Creator.Id, (await fixture.CreateDbContext().Features.SingleAsync()).CreatedByUserId);
+    }
+
+    [Fact]
+    public async Task FeatureName_IsUniqueWithinProject_ButAllowedAcrossProjects()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.StoreFor(fixture.Creator);
+        var firstProject = await store.CreateAsync(new("First", null));
+        var secondProject = await store.CreateAsync(new("Second", null));
+        await store.CreateFeatureAsync(firstProject, new("Authentication", null));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            store.CreateFeatureAsync(firstProject, new("  AUTHENTICATION  ", null)));
+        await store.CreateFeatureAsync(secondProject, new("Authentication", null));
+
+        Assert.Equal(2, (await store.LoadFeaturesAsync()).Count);
+    }
+
+    [Fact]
+    public async Task OnlyProjectCreator_CanManageFeatures()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var creatorStore = fixture.StoreFor(fixture.Creator);
+        var projectId = await creatorStore.CreateAsync(new("Owned", null));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.StoreFor(fixture.OtherUser).CreateFeatureAsync(projectId, new("Blocked", null)));
+    }
+
+    [Fact]
+    public async Task DeletingFeature_RemovesOnlyRelations_AndLogsRemoval()
+    {
+        var fixture = await TestFixture.CreateAsync();
+        var store = fixture.StoreFor(fixture.Creator);
+        var projectId = await store.CreateAsync(new("Project", null));
+        var featureId = await store.CreateFeatureAsync(projectId, new("Checkout", null));
+        var task = TestFixture.NewTask(fixture, projectId, "Keep me", TaskWorkStatus.ToDo);
+        task.TaskFeatures.Add(new TaskFeature { TaskId = task.Id, FeatureId = featureId });
+        await using (var db = fixture.CreateDbContext())
+        {
+            db.Tasks.Add(task);
+            await db.SaveChangesAsync();
+        }
+
+        await store.DeleteFeatureAsync(featureId);
+
+        await using var verify = fixture.CreateDbContext();
+        Assert.True(await verify.Tasks.AnyAsync(item => item.Id == task.Id));
+        Assert.Empty(await verify.TaskFeatures.ToListAsync());
+        var log = Assert.Single(await verify.TaskChangeLogs.ToListAsync());
+        Assert.Equal(TaskChangeType.FeatureRemoved, log.ChangeType);
+        Assert.Equal("FeatureId", log.FieldName);
+        Assert.Equal(featureId.ToString("D"), log.OldValue);
+    }
+
+    [Fact]
     public async Task UnauthenticatedCreation_IsRejected()
     {
         var fixture = await TestFixture.CreateAsync();

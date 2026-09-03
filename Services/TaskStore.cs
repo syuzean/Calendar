@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Calendar.Data;
 using Calendar.Models;
 using Calendar.Services.Email;
@@ -26,7 +28,8 @@ public sealed record CreateLumaTaskRequest(
     string? BugEnvironment = null,
     BugAdaptiveDetailsInput? BugDetails = null,
     IReadOnlyList<BugReproductionStepInput>? ReproductionSteps = null,
-    string? ReproductionMarkdown = null);
+    string? ReproductionMarkdown = null,
+    IReadOnlyCollection<Guid>? FeatureIds = null);
 
 public sealed record RequestTaskDeadlineChange(
     DateOnly? ProposedDeadline,
@@ -48,7 +51,8 @@ public sealed record UpdateLumaTaskContentRequest(
     string? BugEnvironment = null,
     BugAdaptiveDetailsInput? BugDetails = null,
     IReadOnlyList<BugReproductionStepInput>? ReproductionSteps = null,
-    string? ReproductionMarkdown = null);
+    string? ReproductionMarkdown = null,
+    IReadOnlyCollection<Guid>? FeatureIds = null);
 
 public sealed record TaskAttachmentUpload(
     string FileName,
@@ -139,7 +143,8 @@ public sealed record TaskListQuery(
     TaskSortOrder Sort = TaskSortOrder.DeadlineNearest,
     Guid? ProjectId = null,
     IReadOnlyCollection<Guid>? AssigneeIds = null,
-    bool IncludeUnassigned = false);
+    bool IncludeUnassigned = false,
+    IReadOnlyCollection<Guid>? FeatureIds = null);
 
 public sealed record ChangeTaskWorkStatusRequest(
     TaskWorkStatus WorkStatus,
@@ -157,6 +162,7 @@ public sealed record TaskAssigneeFilterSelection(
     bool IncludeUnassigned);
 public sealed record TaskMentionUserOption(Guid Id, string Name, string Email);
 public sealed record TaskMentionDetails(Guid UserId, string UserName);
+public sealed record TaskFeatureDetails(Guid Id, string Name);
 
 public sealed record LumaTaskCommentDetails(
     Guid Id,
@@ -242,7 +248,8 @@ public sealed record LumaTaskDetails(
     string BugEnvironment = "",
     BugAdaptiveDetailsInput? BugDetails = null,
     IReadOnlyList<BugReproductionStepDetails>? ReproductionSteps = null,
-    string ReproductionMarkdown = "");
+    string ReproductionMarkdown = "",
+    IReadOnlyList<TaskFeatureDetails>? Features = null);
 
 public sealed class LumaTaskNotFoundException : Exception
 {
@@ -279,6 +286,7 @@ public sealed class TaskStore(
         if (request.ProjectId is { } projectId)
             selectedProject = await db.Projects.SingleOrDefaultAsync(project => project.Id == projectId)
                 ?? throw new ValidationException("Choose an existing LUMA project.");
+        var selectedFeatureIds = await ValidateFeatureSelectionAsync(db, request.ProjectId, request.FeatureIds);
 
         TaskUser? doer = null;
         string? invitationEmail = null;
@@ -345,6 +353,8 @@ public sealed class TaskStore(
             mention.TaskId = entity.Id;
             entity.Mentions.Add(mention);
         }
+        foreach (var featureId in selectedFeatureIds)
+            entity.TaskFeatures.Add(new TaskFeature { TaskId = entity.Id, FeatureId = featureId });
         if (request.WorkItemType == WorkItemType.Bug)
         {
             foreach (var (step, index) in reproductionInputs.Select((step, index) => (step, index)))
@@ -362,6 +372,8 @@ public sealed class TaskStore(
         }
 
         db.Tasks.Add(entity);
+        AppendChange(db, entity.Id, creatorId, TaskChangeType.Created, "WorkItemType", null,
+            entity.WorkItemType.ToString(), DateTime.UtcNow, Guid.NewGuid());
         string? invitationToken = null;
         if (doer is null && invitationEmail is not null)
         {
@@ -666,6 +678,10 @@ public sealed class TaskStore(
                         attachment.ContentType,
                         attachment.SizeBytes,
                         attachment.CreatedAt))
+                    .ToList(),
+                Features = item.TaskFeatures
+                    .OrderBy(link => link.Feature!.Name)
+                    .Select(link => new TaskFeatureDetails(link.FeatureId, link.Feature!.Name))
                     .ToList()
             })
             .SingleOrDefaultAsync();
@@ -709,7 +725,8 @@ public sealed class TaskStore(
             task.ReproductionSteps,
             string.IsNullOrWhiteSpace(task.ReproductionMarkdown)
                 ? BugReproductionMarkdown.FromLegacySteps(task.ReproductionSteps)
-                : task.ReproductionMarkdown);
+                : task.ReproductionMarkdown,
+            task.Features);
     }
 
     public async Task<LumaTaskDetails> AcceptAsync(Guid taskId)
@@ -735,8 +752,11 @@ public sealed class TaskStore(
         if (task.AssignmentStatus == TaskAssignmentStatus.DeadlineChangeRequested)
             throw new ValidationException("The Task Maker must review the active deadline-change request before this task can be accepted.");
 
+        var acceptedAt = DateTime.UtcNow;
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.AssignmentAccepted, "AssignmentStatus",
+            task.AssignmentStatus.ToString(), TaskAssignmentStatus.Accepted.ToString(), acceptedAt, Guid.NewGuid());
         task.AssignmentStatus = TaskAssignmentStatus.Accepted;
-        task.AcceptedAt = DateTime.UtcNow;
+        task.AcceptedAt = acceptedAt;
         task.Version = Guid.NewGuid();
         QueueInboxItem(
             db,
@@ -775,10 +795,14 @@ public sealed class TaskStore(
 
         var doer = await db.Users.SingleOrDefaultAsync(user => user.Id == currentUserId)
             ?? throw new UnauthorizedAccessException("The signed-in LUMA user could not be found.");
+        var takenAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.TaskTaken, "Assignee", null, currentUserId.ToString("D"), takenAt, mutationId);
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.TaskTaken, "AssignmentStatus", task.AssignmentStatus.ToString(), TaskAssignmentStatus.Accepted.ToString(), takenAt, mutationId);
         task.AssigneeId = currentUserId;
         task.Assignee = doer;
         task.AssignmentStatus = TaskAssignmentStatus.Accepted;
-        task.AcceptedAt = DateTime.UtcNow;
+        task.AcceptedAt = takenAt;
         task.Version = Guid.NewGuid();
 
         QueueInboxItem(
@@ -810,9 +834,15 @@ public sealed class TaskStore(
         if (task.Deadline is null)
             throw new ValidationException("A task without a deadline cannot request a deadline change.");
         ValidateDeadlineChangeRequest(task.Deadline.Value, request);
+        var requestedAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeRequested, "RequestedDeadline", null,
+            FormatValue(request.ProposedDeadline), requestedAt, mutationId);
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeRequested, "AssignmentStatus",
+            task.AssignmentStatus.ToString(), TaskAssignmentStatus.DeadlineChangeRequested.ToString(), requestedAt, mutationId);
         task.RequestedDeadline = request.ProposedDeadline!.Value;
         task.DeadlineChangeComment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
-        task.DeadlineChangeRequestedAt = DateTime.UtcNow;
+        task.DeadlineChangeRequestedAt = requestedAt;
         task.AssignmentStatus = TaskAssignmentStatus.DeadlineChangeRequested;
         task.AcceptedAt = null;
         task.Version = Guid.NewGuid();
@@ -840,9 +870,15 @@ public sealed class TaskStore(
             throw new UnauthorizedAccessException("Only the Task Maker can approve a deadline change.");
         var request = ActiveDeadlineRequest(task);
 
+        var approvedAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeApproved, "Deadline",
+            FormatValue(task.Deadline), FormatValue(request.RequestedDeadline), approvedAt, mutationId);
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeApproved, "AssignmentStatus",
+            task.AssignmentStatus.ToString(), TaskAssignmentStatus.Accepted.ToString(), approvedAt, mutationId);
         task.Deadline = request.RequestedDeadline;
         task.AssignmentStatus = TaskAssignmentStatus.Accepted;
-        task.AcceptedAt = DateTime.UtcNow;
+        task.AcceptedAt = approvedAt;
         ClearDeadlineRequest(task);
         task.Version = Guid.NewGuid();
 
@@ -869,6 +905,12 @@ public sealed class TaskStore(
             throw new UnauthorizedAccessException("Only the Task Maker can decline a deadline change.");
         var request = ActiveDeadlineRequest(task);
 
+        var declinedAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeDeclined, "AssignmentStatus",
+            task.AssignmentStatus.ToString(), TaskAssignmentStatus.Pending.ToString(), declinedAt, mutationId);
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.DeadlineChangeDeclined, "RequestedDeadline",
+            FormatValue(request.RequestedDeadline), null, declinedAt, mutationId);
         task.AssignmentStatus = TaskAssignmentStatus.Pending;
         task.AcceptedAt = null;
         ClearDeadlineRequest(task);
@@ -948,10 +990,18 @@ public sealed class TaskStore(
             updatedProject = await db.Projects.SingleOrDefaultAsync(project => project.Id == projectId)
                 ?? throw new ValidationException("Choose an existing LUMA project.");
         }
+        var existingFeatureIds = task.TaskFeatures.Select(link => link.FeatureId).ToHashSet();
+        var submittedFeatureIds = request.FeatureIds ??
+            (task.ProjectId == request.ProjectId ? existingFeatureIds : []);
+        var updatedFeatureIds = (await ValidateFeatureSelectionAsync(db, request.ProjectId, submittedFeatureIds)).ToHashSet();
+        var updatedFeatures = await db.Features
+            .Where(feature => updatedFeatureIds.Contains(feature.Id))
+            .ToDictionaryAsync(feature => feature.Id);
         var titleChanged = !string.Equals(task.Title, title, StringComparison.Ordinal);
         var descriptionChanged = !string.Equals(task.Description, description, StringComparison.Ordinal);
         var priorityChanged = task.Priority != priority;
         var projectChanged = task.ProjectId != request.ProjectId;
+        var featuresChanged = !existingFeatureIds.SetEquals(updatedFeatureIds);
         var bugMetadataChanged = task.BugCategory != bugCategory ||
                                  task.BugSeverity != bugSeverity ||
                                  task.BugReproducibility != bugReproducibility ||
@@ -1013,15 +1063,50 @@ public sealed class TaskStore(
             .Where(step => (step.NewImages?.Count ?? 0) > 0)
             .ToArray();
         var attachmentsChanged = removedAttachments.Length > 0 || storedAttachments.Count > 0 || stepInputsWithImages.Length > 0;
-        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !attachmentsChanged && !mentionsChanged &&
+        if (!titleChanged && !descriptionChanged && !priorityChanged && !projectChanged && !featuresChanged && !attachmentsChanged && !mentionsChanged &&
             !bugMetadataChanged && !adaptiveBugDetailsChanged && !reproductionStepsChanged && !reproductionMarkdownChanged)
             return ToDetails(task, currentUserId);
+
+        var changedAt = DateTime.UtcNow;
+        var mutationId = Guid.NewGuid();
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "Title", task.Title, title, changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "Description",
+            CompactLargeValue(task.Description), CompactLargeValue(description), changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "Priority", task.Priority.ToString(), priority.ToString(), changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "Project", FormatValue(task.ProjectId), FormatValue(request.ProjectId), changedAt, mutationId);
+        foreach (var featureId in updatedFeatureIds.Except(existingFeatureIds))
+            AppendChange(db, task.Id, currentUserId, TaskChangeType.FeatureAdded, "FeatureId",
+                null, featureId.ToString("D"), changedAt, mutationId);
+        foreach (var featureId in existingFeatureIds.Except(updatedFeatureIds))
+            AppendChange(db, task.Id, currentUserId, TaskChangeType.FeatureRemoved, "FeatureId",
+                featureId.ToString("D"), null, changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "BugCategory", FormatValue(task.BugCategory), FormatValue(bugCategory), changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "BugSeverity", FormatValue(task.BugSeverity), FormatValue(bugSeverity), changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "BugReproducibility", FormatValue(task.BugReproducibility), FormatValue(bugReproducibility), changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "FoundInVersion", task.FoundInVersion, foundInVersion, changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "BugEnvironment", task.BugEnvironment, bugEnvironment, changedAt, mutationId);
+        AppendBugDetailChanges(db, task.Id, currentUserId, ToBugDetailsInput(task.BugDetails), normalizedBugDetails, changedAt, mutationId);
+        AppendFieldChangeIfChanged(db, task.Id, currentUserId, "ReproductionMarkdown",
+            CompactLargeValue(task.BugDetails?.ReproductionMarkdown), CompactLargeValue(effectiveReproductionMarkdown), changedAt, mutationId);
 
         task.Title = title;
         task.Description = description;
         task.Priority = priority;
         task.ProjectId = request.ProjectId;
         task.Project = updatedProject;
+        var removedFeatureLinks = task.TaskFeatures
+            .Where(link => !updatedFeatureIds.Contains(link.FeatureId))
+            .ToArray();
+        db.TaskFeatures.RemoveRange(removedFeatureLinks);
+        foreach (var link in removedFeatureLinks)
+            task.TaskFeatures.Remove(link);
+        foreach (var featureId in updatedFeatureIds.Where(id => !existingFeatureIds.Contains(id)))
+            task.TaskFeatures.Add(new TaskFeature
+            {
+                TaskId = task.Id,
+                FeatureId = featureId,
+                Feature = updatedFeatures[featureId]
+            });
         task.BugCategory = bugCategory;
         task.BugSeverity = bugSeverity;
         task.BugReproducibility = bugReproducibility;
@@ -1155,6 +1240,8 @@ public sealed class TaskStore(
         if (!IsAllowedWorkStatusTransition(task.WorkStatus, request.WorkStatus))
             throw new ValidationException("That work-status transition is not available.");
 
+        AppendChange(db, task.Id, currentUserId, TaskChangeType.FieldChanged, "WorkStatus",
+            task.WorkStatus.ToString(), request.WorkStatus.ToString(), DateTime.UtcNow, Guid.NewGuid());
         task.WorkStatus = request.WorkStatus;
         task.Version = Guid.NewGuid();
 
@@ -1560,6 +1647,93 @@ public sealed class TaskStore(
         });
     }
 
+    private static void AppendChange(
+        CalendarDbContext db,
+        Guid taskId,
+        Guid actorUserId,
+        TaskChangeType changeType,
+        string? fieldName,
+        string? oldValue,
+        string? newValue,
+        DateTime createdAt,
+        Guid mutationId)
+    {
+        db.TaskChangeLogs.Add(new TaskChangeLog
+        {
+            Id = Guid.NewGuid(),
+            TaskId = taskId,
+            ActorUserId = actorUserId,
+            MutationId = mutationId,
+            ChangeType = changeType,
+            FieldName = fieldName,
+            OldValue = oldValue,
+            NewValue = newValue,
+            CreatedAt = createdAt
+        });
+    }
+
+    private static void AppendFieldChangeIfChanged(
+        CalendarDbContext db, Guid taskId, Guid actorUserId, string fieldName,
+        string? oldValue, string? newValue, DateTime createdAt, Guid mutationId)
+    {
+        if (string.Equals(oldValue, newValue, StringComparison.Ordinal)) return;
+        AppendChange(db, taskId, actorUserId, TaskChangeType.FieldChanged, fieldName,
+            oldValue, newValue, createdAt, mutationId);
+    }
+
+    private static void AppendBugDetailChanges(
+        CalendarDbContext db, Guid taskId, Guid actorUserId,
+        BugAdaptiveDetailsInput? oldDetails, BugAdaptiveDetailsInput? newDetails,
+        DateTime createdAt, Guid mutationId)
+    {
+        oldDetails ??= new BugAdaptiveDetailsInput();
+        newDetails ??= new BugAdaptiveDetailsInput();
+        void Add(string field, string? oldValue, string? newValue, bool compact = false) =>
+            AppendFieldChangeIfChanged(db, taskId, actorUserId, field,
+                compact ? CompactLargeValue(oldValue) : oldValue,
+                compact ? CompactLargeValue(newValue) : newValue,
+                createdAt, mutationId);
+
+        Add("ExpectedResult", oldDetails.ExpectedResult, newDetails.ExpectedResult, true);
+        Add("ObservedResult", oldDetails.ObservedResult, newDetails.ObservedResult, true);
+        Add("ErrorMessage", oldDetails.ErrorMessage, newDetails.ErrorMessage, true);
+        Add("StackTrace", oldDetails.ErrorDetails, newDetails.ErrorDetails, true);
+        Add("Logs", oldDetails.Logs, newDetails.Logs, true);
+        Add("ExpectedDuration", oldDetails.ExpectedDuration, newDetails.ExpectedDuration);
+        Add("ActualDuration", oldDetails.ActualDuration, newDetails.ActualDuration);
+        Add("Attempts", FormatValue(oldDetails.Attempts), FormatValue(newDetails.Attempts));
+        Add("HttpMethod", oldDetails.HttpMethod, newDetails.HttpMethod);
+        Add("Endpoint", oldDetails.Endpoint, newDetails.Endpoint, true);
+        Add("StatusCode", FormatValue(oldDetails.StatusCode), FormatValue(newDetails.StatusCode));
+        Add("ApiRequest", oldDetails.ApiRequest, newDetails.ApiRequest, true);
+        Add("ApiResponse", oldDetails.ApiResponse, newDetails.ApiResponse, true);
+        Add("CorrelationId", oldDetails.CorrelationId, newDetails.CorrelationId);
+        Add("DataEntity", oldDetails.DataEntity, newDetails.DataEntity);
+        Add("DataIdentifier", oldDetails.DataIdentifier, newDetails.DataIdentifier);
+        Add("ExpectedValue", oldDetails.ExpectedValue, newDetails.ExpectedValue, true);
+        Add("ActualValue", oldDetails.ActualValue, newDetails.ActualValue, true);
+        Add("LastKnownGoodVersion", oldDetails.LastKnownGoodVersion, newDetails.LastKnownGoodVersion);
+        Add("FirstBrokenVersion", oldDetails.FirstBrokenVersion, newDetails.FirstBrokenVersion);
+        Add("WorksOn", oldDetails.WorksOn, newDetails.WorksOn);
+        Add("FailsOn", oldDetails.FailsOn, newDetails.FailsOn);
+    }
+
+    private static string? CompactLargeValue(string? value)
+    {
+        if (value is null) return null;
+        var bytes = Encoding.UTF8.GetBytes(value);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        return $"length:{value.Length};sha256:{hash}";
+    }
+
+    private static string? FormatValue(object? value) => value switch
+    {
+        null => null,
+        DateOnly date => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+        Guid id => id.ToString("D"),
+        _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+    };
+
     private static void QueueMentionInboxItems(
         CalendarDbContext db,
         LumaTask task,
@@ -1656,6 +1830,8 @@ public sealed class TaskStore(
             .Include(item => item.BugDetails)
             .Include(item => item.ReproductionSteps)
                 .ThenInclude(step => step.Attachments)
+            .Include(item => item.TaskFeatures)
+                .ThenInclude(link => link.Feature)
             .SingleOrDefaultAsync(item => item.Id == taskId)
         ?? throw new LumaTaskNotFoundException();
 
@@ -1762,7 +1938,12 @@ public sealed class TaskStore(
             string.IsNullOrWhiteSpace(task.BugDetails?.ReproductionMarkdown)
                 ? BugReproductionMarkdown.FromLegacySteps(
                     task.ReproductionSteps.OrderBy(step => step.Position).Select(ToReproductionStepDetails))
-                : task.BugDetails.ReproductionMarkdown);
+                : task.BugDetails.ReproductionMarkdown,
+            task.TaskFeatures
+                .Where(link => link.Feature is not null)
+                .OrderBy(link => link.Feature!.Name)
+                .Select(link => new TaskFeatureDetails(link.FeatureId, link.Feature!.Name))
+                .ToArray());
     }
 
     private async Task<Guid> GetCurrentUserIdAsync()
@@ -1775,6 +1956,30 @@ public sealed class TaskStore(
         }
 
         return userId;
+    }
+
+    private static async Task<IReadOnlyCollection<Guid>> ValidateFeatureSelectionAsync(
+        CalendarDbContext db,
+        Guid? projectId,
+        IReadOnlyCollection<Guid>? requestedFeatureIds)
+    {
+        var featureIds = (requestedFeatureIds ?? [])
+            .Distinct()
+            .ToArray();
+        if (featureIds.Any(id => id == Guid.Empty))
+            throw new ValidationException("Choose valid project features.");
+        if (featureIds.Length == 0)
+            return featureIds;
+        if (projectId is null)
+            throw new ValidationException("Choose a project before selecting features.");
+
+        var matchingIds = await db.Features.AsNoTracking()
+            .Where(feature => feature.ProjectId == projectId.Value && featureIds.Contains(feature.Id))
+            .Select(feature => feature.Id)
+            .ToArrayAsync();
+        if (matchingIds.Length != featureIds.Length)
+            throw new ValidationException("Every selected feature must belong to the task's project.");
+        return matchingIds;
     }
 
     private static void Validate(CreateLumaTaskRequest request)
@@ -2142,6 +2347,12 @@ public sealed class TaskStore(
             tasks = tasks.Where(task => task.Priority == query.Priority.Value);
         if (query.ProjectId is not null)
             tasks = tasks.Where(task => task.ProjectId == query.ProjectId.Value);
+        var featureIds = (query.FeatureIds ?? [])
+            .Where(featureId => featureId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        if (featureIds.Length > 0)
+            tasks = tasks.Where(task => task.TaskFeatures.Any(link => featureIds.Contains(link.FeatureId)));
         var assigneeIds = (query.AssigneeIds ?? [])
             .Where(userId => userId != Guid.Empty)
             .Distinct()

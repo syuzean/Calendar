@@ -20,6 +20,9 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
     public DbSet<TaskCommentMention> TaskCommentMentions => Set<TaskCommentMention>();
     public DbSet<LumaTaskBugDetails> TaskBugDetails => Set<LumaTaskBugDetails>();
     public DbSet<BugReproductionStep> BugReproductionSteps => Set<BugReproductionStep>();
+    public DbSet<TaskChangeLog> TaskChangeLogs => Set<TaskChangeLog>();
+    public DbSet<LumaFeature> Features => Set<LumaFeature>();
+    public DbSet<TaskFeature> TaskFeatures => Set<TaskFeature>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -169,6 +172,58 @@ public sealed class CalendarDbContext(DbContextOptions<CalendarDbContext> option
             entity.HasOne(project => project.CreatedByUser)
                 .WithMany(user => user.CreatedProjects)
                 .HasForeignKey(project => project.CreatedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LumaFeature>(entity =>
+        {
+            entity.ToTable("Features");
+            entity.Property(feature => feature.Name).HasMaxLength(120);
+            entity.Property(feature => feature.NormalizedName).HasMaxLength(120);
+            entity.Property(feature => feature.Description).HasMaxLength(2000);
+            entity.HasIndex(feature => new { feature.ProjectId, feature.NormalizedName }).IsUnique();
+            entity.HasOne(feature => feature.Project)
+                .WithMany(project => project.Features)
+                .HasForeignKey(feature => feature.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(feature => feature.CreatedByUser)
+                .WithMany(user => user.CreatedFeatures)
+                .HasForeignKey(feature => feature.CreatedByUserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<TaskFeature>(entity =>
+        {
+            entity.ToTable("TaskFeatures");
+            entity.HasKey(item => new { item.TaskId, item.FeatureId });
+            entity.HasIndex(item => item.FeatureId);
+            entity.HasOne(item => item.Task)
+                .WithMany(task => task.TaskFeatures)
+                .HasForeignKey(item => item.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Feature)
+                .WithMany(feature => feature.TaskFeatures)
+                .HasForeignKey(item => item.FeatureId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TaskChangeLog>(entity =>
+        {
+            entity.ToTable("TaskChangeLogs", table =>
+                table.HasCheckConstraint("CK_TaskChangeLogs_ChangeType", "[ChangeType] IN (0, 1, 2, 3, 4, 5, 6, 7, 8)"));
+            entity.Property(log => log.FieldName).HasMaxLength(100);
+            entity.Property(log => log.OldValue).HasMaxLength(500);
+            entity.Property(log => log.NewValue).HasMaxLength(500);
+            entity.HasIndex(log => new { log.TaskId, log.CreatedAt });
+            entity.HasIndex(log => new { log.ActorUserId, log.CreatedAt });
+            entity.HasIndex(log => log.MutationId);
+            entity.HasOne(log => log.Task)
+                .WithMany(task => task.ChangeLogs)
+                .HasForeignKey(log => log.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(log => log.ActorUser)
+                .WithMany(user => user.AuthoredTaskChanges)
+                .HasForeignKey(log => log.ActorUserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
 

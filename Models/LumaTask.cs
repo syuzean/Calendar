@@ -34,4 +34,6 @@ public sealed class LumaTask
     public ICollection<InboxItem> InboxItems { get; set; } = [];
     public ICollection<TaskAttachment> Attachments { get; set; } = [];
     public ICollection<TaskMention> Mentions { get; set; } = [];
+    public ICollection<TaskChangeLog> ChangeLogs { get; set; } = [];
+    public ICollection<TaskFeature> TaskFeatures { get; set; } = [];
 }
